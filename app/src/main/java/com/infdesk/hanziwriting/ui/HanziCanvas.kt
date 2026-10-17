@@ -2,12 +2,12 @@ package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
@@ -23,12 +23,17 @@ fun HanziCanvas(
 ) {
     val data = viewModel.practiceData ?: return
     val density = LocalDensity.current
-    val canvasSizePx = with(density) { 300.dp.toPx() } // Match the 300.dp modifier
+    val canvasSizePx = with(density) { 300.dp.toPx() }
+    
+    // FIXED: Extract colors in the @Composable context, BEFORE the Canvas lambda
+    val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
+    val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+    val userColor = MaterialTheme.colorScheme.primary
 
     Canvas(
         modifier = modifier
             .size(300.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(surfaceVariantColor)
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
@@ -58,12 +63,10 @@ fun HanziCanvas(
                 )
             }
     ) {
-        val scale = size.width / 1024f // makemeahanzi uses a 1024x1024 grid
-        val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
-        val userColor = MaterialTheme.colorScheme.primary
+        val scale = size.width / 1024f
         val strokeWidth = 16f * scale
 
-        // 1. Draw Background Guide (All strokes faintly)
+        // 1. Draw Background Guide
         data.medians.forEach { strokeMedians ->
             val path = Path()
             strokeMedians.forEachIndexed { index, point ->
