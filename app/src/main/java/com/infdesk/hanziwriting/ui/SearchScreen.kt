@@ -33,6 +33,7 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
     var characterToAdd by remember { mutableStateOf("") }
     var availableLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
 
+    // Load lists when dialog might open
     LaunchedEffect(showAddToListDialog) {
         if (showAddToListDialog) {
             availableLists = dao.getAllLists()
@@ -90,6 +91,7 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
         }
     }
 
+    // Dialog must also be inside the @Composable function
     if (showAddToListDialog) {
         AddToListDialog(
             character = characterToAdd,
