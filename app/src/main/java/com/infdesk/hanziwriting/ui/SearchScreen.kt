@@ -15,7 +15,7 @@ import com.infdesk.hanziwriting.data.HanziCharacter
 import kotlinx.coroutines.launch
 
 @Composable
-fun SearchScreen() {
+fun SearchScreen(onPracticeClick: (String) -> Unit) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
@@ -32,10 +32,7 @@ fun SearchScreen() {
     ) {
         OutlinedTextField(
             value = searchQuery,
-            onValueChange = { 
-                searchQuery = it
-                // Debounce search could be added here
-            },
+            onValueChange = { searchQuery = it },
             label = { Text("Search Hanzi, Pinyin, or English") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
@@ -51,7 +48,8 @@ fun SearchScreen() {
                     isSearching = false
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isSearching && searchQuery.isNotBlank()
         ) {
             Text(if (isSearching) "Searching..." else "Search")
         }
@@ -62,9 +60,8 @@ fun SearchScreen() {
             items(searchResults) { char ->
                 HanziResultItem(
                     character = char,
-                    onPracticeClick = { /* Navigate to Practice Screen with this character */ },
-                    onPracticeClick = { onPracticeClick(character.character) },
-                    onAddToListClick = { /* Show dialog to create/select list */ }
+                    onPracticeClick = { onPracticeClick(char.character) }, // Fixed: uses 'char' and calls the passed lambda
+                    onAddToListClick = { /* TODO: Show dialog to create/select list */ }
                 )
             }
         }
@@ -97,7 +94,8 @@ fun HanziResultItem(
                     Text(
                         text = character.definition,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2
                     )
                 }
             }
