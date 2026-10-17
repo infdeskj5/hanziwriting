@@ -7,7 +7,7 @@ import kotlinx.coroutines.withContext
 
 data class MakeMeAHanziData(
     val character: String,
-    val medians: List<List<List<Double>>> // Simplified: we will just store the raw JSON string for now
+    val medians: List<List<List<Double>>>
 )
 
 object AssetParser {
@@ -21,23 +21,20 @@ object AssetParser {
                 lines.forEach { line ->
                     if (line.startsWith("#") || line.isBlank()) return@forEach
                     
-                    // CC-CEDICT format: Traditional Simplified [pin1 yin2] /def1/def2/
                     val match = Regex("^(.+)\\s+(.+)\\s+\\[(.+)\\]\\s+/(.+)/").find(line)
                     if (match != null) {
                         val (traditional, simplified, pinyin, definition) = match.destructured
-                        // We primarily care about the simplified character for this app
                         charactersToInsert.add(
                             HanziCharacter(
                                 character = simplified,
                                 pinyin = pinyin,
                                 definition = definition.replace("/", ", "),
-                                radicals = "" // Can be expanded later with a radical mapping file
+                                radicals = ""
                             )
                         )
                     }
                 }
             }
-            // Insert in batches to avoid memory issues
             charactersToInsert.chunked(1000).forEach { chunk ->
                 dao.insertCharacters(chunk)
             }
@@ -59,7 +56,7 @@ object AssetParser {
                         graphicsToInsert.add(
                             HanziGraphics(
                                 character = data.character,
-                                strokesJson = line // Store raw JSON line for easy parsing later
+                                rawJson = line // FIXED: Changed from strokesJson to rawJson
                             )
                         )
                     } catch (e: Exception) {
