@@ -14,6 +14,50 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import kotlinx.coroutines.launch
 
+// Add these states at the top of SearchScreen
+var showAddToListDialog by remember { mutableStateOf(false) }
+var characterToAdd by remember { mutableStateOf("") }
+var availableLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
+
+// Load lists when dialog might open
+LaunchedEffect(showAddToListDialog) {
+    if (showAddToListDialog) {
+        availableLists = dao.getAllLists()
+    }
+}
+
+// Inside the LazyColumn items:
+HanziResultItem(
+    character = char,
+    onPracticeClick = { onPracticeClick(char.character) },
+    onAddToListClick = { 
+        characterToAdd = char.character
+        showAddToListDialog = true 
+    }
+)
+
+// At the very bottom of SearchScreen, before the closing brace:
+if (showAddToListDialog) {
+    AddToListDialog(
+        character = characterToAdd,
+        lists = availableLists,
+        onDismiss = { showAddToListDialog = false },
+        onAddToExisting = { listId ->
+            coroutineScope.launch {
+                dao.addCharacterToList(com.infdesk.hanziwriting.data.ListItem(listId = listId, character = characterToAdd))
+                showAddToListDialog = false
+            }
+        },
+        onCreateNew = { newName ->
+            coroutineScope.launch {
+                val newListId = dao.insertList(com.infdesk.hanziwriting.data.PracticeList(name = newName))
+                dao.addCharacterToList(com.infdesk.hanziwriting.data.ListItem(listId = newListId.toInt(), character = characterToAdd))
+                showAddToListDialog = false
+            }
+        }
+    )
+}
+
 @Composable
 fun SearchScreen(onPracticeClick: (String) -> Unit) {
     val context = LocalContext.current
