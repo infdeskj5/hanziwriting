@@ -19,36 +19,47 @@ enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings)
 }
 
+// Add this to your Screen enum or handle as a separate route
+// For simplicity, let's pass a callback
 @Composable
 fun MainScreen() {
     var currentScreen by remember { mutableStateOf(Screen.Search) }
+    var practiceCharacter by remember { mutableStateOf<String?>(null) }
+
+    // If practiceCharacter is set, override the screen to Practice
+    val displayScreen = if (practiceCharacter != null) Screen.Practice else currentScreen
 
     Scaffold(
         bottomBar = {
+            // Hide bottom bar if currently practicing to give full focus, 
+            // or keep it if you prefer. Let's keep it but highlight Practice.
             NavigationBar {
                 Screen.entries.forEach { screen ->
                     NavigationBarItem(
                         icon = { Icon(screen.icon, contentDescription = screen.title) },
                         label = { Text(screen.title) },
-                        selected = currentScreen == screen,
-                        onClick = { currentScreen = screen }
+                        selected = displayScreen == screen,
+                        onClick = { 
+                            currentScreen = screen
+                            if (screen != Screen.Practice) practiceCharacter = null 
+                        }
                     )
                 }
             }
         }
     ) { paddingValues ->
-        // Content Area
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentAlignment = Alignment.Center // Center alignment for Search Bar
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            contentAlignment = Alignment.Center
         ) {
-            when (currentScreen) {
-                Screen.Search -> SearchScreen()
-                Screen.Lists -> Text("Lists Page", color = MaterialTheme.colorScheme.onBackground)
-                Screen.Practice -> PracticeScreen()
-                Screen.Settings -> Text("Settings Page", color = MaterialTheme.colorScheme.onBackground)
+            when (displayScreen) {
+                Screen.Search -> SearchScreen(onPracticeClick = { char -> 
+                    practiceCharacter = char
+                    currentScreen = Screen.Practice 
+                })
+                Screen.Practice -> PracticeScreen(characterToPractice = practiceCharacter)
+                Screen.Lists -> Text("Lists Page")
+                Screen.Settings -> Text("Settings Page")
             }
         }
     }
