@@ -1,4 +1,4 @@
-package com.infdesk.hanziwriting
+package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
