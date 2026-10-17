@@ -14,7 +14,7 @@ data class HanziCharacter(
 @Entity(tableName = "hanzi_graphics")
 data class HanziGraphics(
     @PrimaryKey val character: String,
-    val strokesJson: String // JSON array of stroke medians from makemeahanzi
+    val rawJson: String // Store the entire JSON line, parse only when needed
 )
 
 @Entity(tableName = "practice_lists")
