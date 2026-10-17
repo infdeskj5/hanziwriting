@@ -63,6 +63,7 @@ fun SearchScreen() {
                 HanziResultItem(
                     character = char,
                     onPracticeClick = { /* Navigate to Practice Screen with this character */ },
+                    onPracticeClick = { onPracticeClick(character.character) },
                     onAddToListClick = { /* Show dialog to create/select list */ }
                 )
             }
