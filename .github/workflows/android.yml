@@ -35,6 +35,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download graphics.txt
+        run: |
+          mkdir -p app/src/main/assets
+          curl -L -o app/src/main/assets/graphics.txt https://raw.githubusercontent.com/skishore/makemeahanzi/master/graphics.txt
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
