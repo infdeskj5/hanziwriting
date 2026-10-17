@@ -10,8 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.infdesk.hanziwriting.data.AppDatabase
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.infdesk.hanziwriting.data.AppDatabase
 
 @Composable
 fun PracticeScreen(
@@ -81,9 +82,8 @@ fun PracticeScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Reset")
                 }
-                
                 Spacer(Modifier.width(16.dp))
-
+                
                 if (viewModel.isCompleted) {
                     Button(
                         onClick = { /* Navigate back or to next character */ },
@@ -97,8 +97,7 @@ fun PracticeScreen(
     }
 }
 
-// Simple ViewModel Factory
-import androidx.lifecycle.ViewModelProvider
+// Simple ViewModel Factory (Now safely at the bottom, with no imports after it)
 class PracticeViewModelFactory(private val database: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(PracticeViewModel::class.java)) {
