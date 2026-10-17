@@ -17,6 +17,7 @@ import com.infdesk.hanziwriting.data.AppDatabase
 @Composable
 fun PracticeScreen(
     characterToPractice: String? = null,
+    onBackClick: () -> Unit = {}, // FIXED: Added this parameter
     viewModel: PracticeViewModel = viewModel(
         factory = PracticeViewModelFactory(AppDatabase.getDatabase(LocalContext.current))
     )
@@ -40,7 +41,6 @@ fun PracticeScreen(
             return@Column
         }
 
-        // Top: Character Info
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -57,12 +57,10 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Middle: The Canvas
         HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Bottom: Controls & Error Count (Easy thumb reach)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -86,7 +84,7 @@ fun PracticeScreen(
                 
                 if (viewModel.isCompleted) {
                     Button(
-                        onClick = { /* Navigate back or to next character */ },
+                        onClick = onBackClick, // FIXED: Use onBackClick to exit
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
                     ) {
                         Text("Done!")
@@ -97,7 +95,6 @@ fun PracticeScreen(
     }
 }
 
-// Simple ViewModel Factory (Now safely at the bottom, with no imports after it)
 class PracticeViewModelFactory(private val database: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(PracticeViewModel::class.java)) {
