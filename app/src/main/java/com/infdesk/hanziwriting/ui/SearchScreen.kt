@@ -114,3 +114,67 @@ fun HanziResultItem(
         }
     }
 }
+
+@Composable
+fun AddToListDialog(
+    character: String,
+    lists: List<PracticeList>,
+    onDismiss: () -> Unit,
+    onAddToExisting: (Int) -> Unit,
+    onCreateNew: (String) -> Unit
+) {
+    var newListName by remember { mutableStateOf("") }
+    var showNewListInput by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add '$character' to List") },
+        text = {
+            Column {
+                if (showNewListInput) {
+                    OutlinedTextField(
+                        value = newListName,
+                        onValueChange = { newListName = it },
+                        label = { Text("New List Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { 
+                            if (newListName.isNotBlank()) {
+                                onCreateNew(newListName)
+                            }
+                        }) {
+                            Text("Create & Add")
+                        }
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(lists) { list ->
+                            TextButton(
+                                onClick = { onAddToExisting(list.listId) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(list.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+                            }
+                        }
+                        item {
+                            TextButton(
+                                onClick = { showNewListInput = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("+ Create New List", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
