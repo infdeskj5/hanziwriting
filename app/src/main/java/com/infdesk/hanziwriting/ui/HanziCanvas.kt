@@ -3,7 +3,7 @@ package com.infdesk.hanziwriting.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -12,63 +12,84 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Canvas
 
 @Composable
-fun PracticeScreen() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("Practice: 龙 (Dragon)", style = MaterialTheme.typography.headlineMedium)
-        Spacer(modifier = Modifier.height(16.dp))
-        HanziCanvas()
-    }
-}
-
-@Composable
-fun HanziCanvas() {
-    // Stores completed strokes
-    val paths = remember { mutableStateListOf<Path>() }
-    // The current active stroke being drawn
-    val currentPath = remember { Path() }
+fun HanziCanvas(
+    viewModel: PracticeViewModel,
+    modifier: Modifier = Modifier
+) {
+    val data = viewModel.practiceData ?: return
+    val density = LocalDensity.current
+    val canvasSizePx = with(density) { 300.dp.toPx() } // Match the 300.dp modifier
 
     Canvas(
-        modifier = Modifier
+        modifier = modifier
             .size(300.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        currentPath.moveTo(offset.x, offset.y)
+                        if (!viewModel.isCompleted) {
+                            viewModel.currentStrokePoints.clear()
+                            viewModel.addPointToCurrentStroke(offset)
+                        }
                     },
                     onDrag = { change, dragAmount ->
-                        change.consume()
-                        currentPath.relativeLineTo(dragAmount.x, dragAmount.y)
+                        if (!viewModel.isCompleted) {
+                            change.consume()
+                            val newPoint = Offset(
+                                viewModel.currentStrokePoints.last().x + dragAmount.x,
+                                viewModel.currentStrokePoints.last().y + dragAmount.y
+                            )
+                            viewModel.addPointToCurrentStroke(newPoint)
+                        }
                     },
                     onDragEnd = {
-                        // Save stroke and reset for next one
-                        paths.add(Path().apply { addPath(currentPath) })
-                        currentPath.reset()
-                        // TODO: Trigger Stroke Evaluation here
+                        if (!viewModel.isCompleted) {
+                            viewModel.finishStroke(canvasSizePx)
+                        }
                     },
                     onDragCancel = {
-                        currentPath.reset()
+                        viewModel.currentStrokePoints.clear()
                     }
                 )
             }
     ) {
-        // Draw grid guides (optional, for elegance)
-        val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
-        drawLine(strokeColor, Offset(size.width/2, 0f), Offset(size.width/2, size.height), alpha = 0.3f)
-        drawLine(strokeColor, Offset(0f, size.height/2), Offset(size.width, size.height/2), alpha = 0.3f)
+        val scale = size.width / 1024f // makemeahanzi uses a 1024x1024 grid
+        val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+        val userColor = MaterialTheme.colorScheme.primary
+        val strokeWidth = 16f * scale
 
-        // Draw completed strokes
-        paths.forEach { path ->
-            drawPath(path, Color.White, style = Stroke(width = 14f, cap = StrokeCap.Round))
+        // 1. Draw Background Guide (All strokes faintly)
+        data.medians.forEach { strokeMedians ->
+            val path = Path()
+            strokeMedians.forEachIndexed { index, point ->
+                val x = point[0].toFloat() * scale
+                val y = point[1].toFloat() * scale
+                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, guideColor, style = Stroke(width = strokeWidth * 1.5f, cap = StrokeCap.Round))
         }
-        // Draw active stroke
-        drawPath(currentPath, Color.White, style = Stroke(width = 14f, cap = StrokeCap.Round))
+
+        // 2. Draw Completed Correct Strokes
+        viewModel.completedStrokes.forEach { points ->
+            val path = Path()
+            points.forEachIndexed { index, offset ->
+                if (index == 0) path.moveTo(offset.x, offset.y) else path.lineTo(offset.x, offset.y)
+            }
+            drawPath(path, userColor.copy(alpha = 0.7f), style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
+        }
+
+        // 3. Draw Current Active Stroke
+        if (viewModel.currentStrokePoints.isNotEmpty()) {
+            val path = Path()
+            viewModel.currentStrokePoints.forEachIndexed { index, offset ->
+                if (index == 0) path.moveTo(offset.x, offset.y) else path.lineTo(offset.x, offset.y)
+            }
+            drawPath(path, userColor, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
+        }
     }
 }
