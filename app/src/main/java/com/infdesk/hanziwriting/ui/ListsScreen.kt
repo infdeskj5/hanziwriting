@@ -26,26 +26,14 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
 
-    // Load lists
     LaunchedEffect(Unit) {
         lists = dao.getAllLists()
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("My Lists", style = MaterialTheme.typography.headlineMedium)
-            IconButton(onClick = { showCreateListDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Create List")
-            }
-        }
+        Text("My Lists", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 16.dp))
         
-        Spacer(modifier = Modifier.height(16.dp))
-
-        LazyColumn {
+        LazyColumn(modifier = Modifier.weight(1f)) {
             items(lists) { list ->
                 Card(
                     modifier = Modifier
@@ -65,6 +53,19 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // + Button at the bottom
+        Button(
+            onClick = { showCreateListDialog = true },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Create New List", style = MaterialTheme.typography.titleMedium)
+        }
     }
 
     if (showCreateListDialog) {
@@ -76,7 +77,8 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
                     value = newListName,
                     onValueChange = { newListName = it },
                     label = { Text("List Name") },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
