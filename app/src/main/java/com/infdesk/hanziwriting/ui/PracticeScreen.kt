@@ -2,6 +2,9 @@ package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
+import com.infdesk.hanziwriting.utils.PinyinUtils
 
 @Composable
 fun PracticeScreen(
@@ -22,7 +26,7 @@ fun PracticeScreen(
 
     LaunchedEffect(characterToPractice) {
         if (characterToPractice != null) {
-            viewModel.loadCharacter(characterToPractice)
+            viewModel.loadCharacters(characterToPractice)
         }
     }
 
@@ -33,67 +37,137 @@ fun PracticeScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Top bar: exit + position (only element at the top; frequent controls stay at the bottom)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBackClick) {
+                Icon(Icons.Default.Close, contentDescription = "Exit practice")
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            if (viewModel.totalCharacters > 1) {
+                Text(
+                    "Character ${viewModel.currentQueueIndex + 1} of ${viewModel.totalCharacters}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            // Invisible spacer to balance the close button
+            Spacer(modifier = Modifier.width(48.dp))
+        }
+
         when {
             error != null -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Could not load character", style = MaterialTheme.typography.titleLarge)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = onBackClick) { Text("Go Back") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (viewModel.hasPreviousCharacter) {
+                                OutlinedButton(onClick = { viewModel.previousCharacter() }) { Text("Previous") }
+                            }
+                            if (viewModel.hasNextCharacter) {
+                                Button(onClick = { viewModel.nextCharacter() }) { Text("Next") }
+                            } else {
+                                Button(onClick = onBackClick) { Text("Go Back") }
+                            }
+                        }
                     }
                 }
             }
             data == null -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator()
                 }
             }
             else -> {
+                // Character info card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
-                        Text(data.pinyin, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            PinyinUtils.convertToToneMarks(data.pinyin),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                        if (data.radical != null) {
-                            Text("Radical: ${data.radical}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                        if (!data.radical.isNullOrBlank()) {
+                            Text(
+                                "Radical: ${data.radical}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
+                // Bottom controls (thumb-reachable)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}", style = MaterialTheme.typography.bodyLarge)
-                        Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            "Errors: ${viewModel.totalErrors}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (viewModel.hasPreviousCharacter) {
+                            IconButton(onClick = { viewModel.previousCharacter() }) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "Previous character")
+                            }
+                        }
                         OutlinedButton(
                             onClick = { viewModel.resetPractice() },
-                            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = "Reset")
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text("Reset")
                         }
-                        Spacer(Modifier.width(16.dp))
                         if (viewModel.isCompleted) {
-                            Button(
-                                onClick = onBackClick,
-                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                            ) {
-                                Text("Done!")
+                            Spacer(Modifier.width(8.dp))
+                            if (viewModel.hasNextCharacter) {
+                                Button(
+                                    onClick = { viewModel.nextCharacter() },
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                                ) {
+                                    Text("Next")
+                                    Spacer(Modifier.width(6.dp))
+                                    Icon(Icons.Default.ArrowForward, contentDescription = null)
+                                }
+                            } else {
+                                Button(
+                                    onClick = onBackClick,
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                                ) {
+                                    Text("Done!")
+                                }
                             }
                         }
                     }
