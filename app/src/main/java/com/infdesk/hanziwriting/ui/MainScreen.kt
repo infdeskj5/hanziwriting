@@ -2,7 +2,6 @@ package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -24,7 +23,6 @@ fun MainScreen() {
     var practiceCharacter by remember { mutableStateOf<String?>(null) }
     var practiceListId by remember { mutableStateOf<Int?>(null) }
 
-    // Determine what to show
     val displayState = when {
         practiceListId != null -> "ListPractice"
         practiceCharacter != null -> "Practice"
@@ -70,7 +68,7 @@ fun MainScreen() {
                     listId = practiceListId!!,
                     onBackClick = { practiceListId = null }
                 )
-                "Settings" -> Text("Settings Page (Coming Soon)", style = MaterialTheme.typography.bodyLarge)
+                "Settings" -> SettingsScreen() // WIRED!
             }
         }
     }
