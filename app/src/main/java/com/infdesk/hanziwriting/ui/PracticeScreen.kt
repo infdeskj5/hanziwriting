@@ -27,66 +27,74 @@ fun PracticeScreen(
     }
 
     val data = viewModel.practiceData
+    val error = viewModel.loadError
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // SAFE PATTERN: Use if/else instead of early return
-        if (data == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(data.pinyin, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                    if (data.radical != null) {
-                        Text("Radical: ${data.radical}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+        when {
+            error != null -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Could not load character", style = MaterialTheme.typography.titleLarge)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = onBackClick) { Text("Go Back") }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}", style = MaterialTheme.typography.bodyLarge)
-                    Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+            data == null -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            else -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
+                        Text(data.pinyin, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                        if (data.radical != null) {
+                            Text("Radical: ${data.radical}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                        }
+                    }
                 }
 
-                Row {
-                    OutlinedButton(
-                        onClick = { viewModel.resetPractice() },
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Reset")
-                        Spacer(Modifier.width(8.dp))
-                        Text("Reset")
+                Spacer(modifier = Modifier.height(24.dp))
+                HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}", style = MaterialTheme.typography.bodyLarge)
+                        Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
                     }
-                    Spacer(Modifier.width(16.dp))
-                    
-                    if (viewModel.isCompleted) {
-                        Button(
-                            onClick = onBackClick,
+                    Row {
+                        OutlinedButton(
+                            onClick = { viewModel.resetPractice() },
                             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
                         ) {
-                            Text("Done!")
+                            Icon(Icons.Default.Refresh, contentDescription = "Reset")
+                            Spacer(Modifier.width(8.dp))
+                            Text("Reset")
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        if (viewModel.isCompleted) {
+                            Button(
+                                onClick = onBackClick,
+                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                            ) {
+                                Text("Done!")
+                            }
                         }
                     }
                 }
