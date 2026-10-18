@@ -8,7 +8,7 @@ data class HanziCharacter(
     @PrimaryKey val character: String,
     val pinyin: String,
     val definition: String,
-    val radicals: String // Comma-separated radicals for simplicity
+    val radical: String = ""
 )
 
 @Entity(tableName = "hanzi_graphics")
