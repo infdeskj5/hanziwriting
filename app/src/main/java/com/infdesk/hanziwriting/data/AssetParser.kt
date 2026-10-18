@@ -2,13 +2,9 @@ package com.infdesk.hanziwriting.data
 
 import android.content.Context
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
-data class MakeMeAHanziData(
-    val character: String,
-    val medians: List<List<List<Double>>>
-)
 
 object AssetParser {
     suspend fun parseAndSaveDictionary(context: Context, dao: HanziDao) {
@@ -17,11 +13,13 @@ object AssetParser {
             val reader = inputStream.bufferedReader()
             val charactersToInsert = mutableListOf<HanziCharacter>()
 
+            // FIXED: More robust regex that correctly captures multi-character words
+            val regex = Regex("^(.+?)\\s+(.+?)\\s+\\[(.+?)\\]\\s+/(.+)/$")
+
             reader.useLines { lines ->
                 lines.forEach { line ->
                     if (line.startsWith("#") || line.isBlank()) return@forEach
-                    
-                    val match = Regex("^(.+)\\s+(.+)\\s+\\[(.+)\\]\\s+/(.+)/").find(line)
+                    val match = regex.find(line)
                     if (match != null) {
                         val (traditional, simplified, pinyin, definition) = match.destructured
                         charactersToInsert.add(
@@ -29,7 +27,7 @@ object AssetParser {
                                 character = simplified,
                                 pinyin = pinyin,
                                 definition = definition.replace("/", ", "),
-                                radicals = ""
+                                radical = ""
                             )
                         )
                     }
@@ -37,6 +35,30 @@ object AssetParser {
             }
             charactersToInsert.chunked(1000).forEach { chunk ->
                 dao.insertCharacters(chunk)
+            }
+        }
+    }
+
+    suspend fun parseAndSaveRadicals(context: Context, dao: HanziDao) {
+        withContext(Dispatchers.IO) {
+            val inputStream = context.assets.open("dictionary.txt")
+            val reader = inputStream.bufferedReader()
+            val gson = Gson()
+
+            reader.useLines { lines ->
+                lines.chunked(500).forEach { chunk ->
+                    chunk.forEach { line ->
+                        if (line.isBlank()) return@forEach
+                        try {
+                            val json = gson.fromJson(line, JsonObject::class.java)
+                            val character = json.get("character")?.asString ?: return@forEach
+                            val radical = json.get("radical")?.asString ?: ""
+                            dao.updateRadical(character, radical)
+                        } catch (e: Exception) {
+                            // Ignore malformed lines
+                        }
+                    }
+                }
             }
         }
     }
