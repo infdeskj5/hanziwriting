@@ -12,7 +12,6 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
-import com.infdesk.hanziwriting.data.HanziGraphics
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
 import kotlin.math.pow
@@ -24,7 +23,7 @@ data class CharacterPracticeData(
     val definition: String,
     val radical: String?,
     val totalStrokes: Int,
-    val medians: List<List<List<Double>>> // List of strokes, each is a list of [x, y] points
+    val medians: List<List<List<Double>>>
 )
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
@@ -37,10 +36,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     var isCompleted by mutableStateOf(false)
         private set
     
-    // Holds the points of the stroke currently being drawn
     val currentStrokePoints = mutableStateListOf<Offset>()
-    
-    // Holds completed, correct strokes
     val completedStrokes = mutableStateListOf<List<Offset>>()
 
     private val gson = Gson()
@@ -58,13 +54,11 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     private fun parseGraphicsAndSetup(character: String, charData: HanziCharacter, rawJson: String) {
         try {
-            // Parse the makemeahanzi JSON format
             val type = object : TypeToken<Map<String, Any>>() {}.type
             val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
             
             val strokes = (jsonMap["strokes"] as Double).toInt()
             val radical = jsonMap["radical"] as? String
-            // Medians is a List of strokes, where each stroke is a List of [x, y] coordinates
             @Suppress("UNCHECKED_CAST")
             val medians = jsonMap["medians"] as List<List<List<Double>>>
 
@@ -92,18 +86,16 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
         val expectedMedian = gson.toJson(data.medians[currentStrokeIndex])
         
-        // Evaluate the stroke
         val errors = StrokeEvaluator.evaluateStroke(
             userPoints = currentStrokePoints.toList(),
             expectedMedianJson = expectedMedian,
             canvasSize = canvasSize,
-            threshold = 60f // Adjust this tolerance (lower = stricter)
+            threshold = 60f
         )
 
-        val maxAllowedErrors = (currentStrokePoints.size * 0.4).toInt() // Allow 40% deviation
+        val maxAllowedErrors = (currentStrokePoints.size * 0.4).toInt()
 
         if (errors <= maxAllowedErrors && currentStrokePoints.size > 5) {
-            // Stroke is correct! Lock it in and move to next
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
@@ -112,9 +104,8 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                 isCompleted = true
             }
         } else {
-            // Stroke is incorrect
             totalErrors++
-            currentStrokePoints.clear() // Clear and let user try this stroke again
+            currentStrokePoints.clear()
         }
     }
 
