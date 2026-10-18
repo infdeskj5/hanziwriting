@@ -10,18 +10,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.infdesk.hanziwriting.data.AppDatabase
 
 @Composable
 fun PracticeScreen(
     characterToPractice: String? = null,
-    onBackClick: () -> Unit = {}, // FIXED: Added this parameter
-    viewModel: PracticeViewModel = viewModel(
-        factory = PracticeViewModelFactory(AppDatabase.getDatabase(LocalContext.current))
-    )
+    onBackClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    // BULLETPROOF: Use remember instead of viewModel() to avoid Factory reflection crashes
+    val viewModel = remember { PracticeViewModel(AppDatabase.getDatabase(context)) }
+
     LaunchedEffect(characterToPractice) {
         if (characterToPractice != null) {
             viewModel.loadCharacter(characterToPractice)
@@ -84,7 +83,7 @@ fun PracticeScreen(
                 
                 if (viewModel.isCompleted) {
                     Button(
-                        onClick = onBackClick, // FIXED: Use onBackClick to exit
+                        onClick = onBackClick,
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
                     ) {
                         Text("Done!")
@@ -92,15 +91,5 @@ fun PracticeScreen(
                 }
             }
         }
-    }
-}
-
-class PracticeViewModelFactory(private val database: AppDatabase) : ViewModelProvider.Factory {
-    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(PracticeViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return PracticeViewModel(database) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
