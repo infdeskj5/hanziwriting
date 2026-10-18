@@ -14,10 +14,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardActions
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.ListItem
@@ -83,11 +79,12 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
                 .fillMaxWidth()
                 .focusRequester(focusRequester),
             shape = MaterialTheme.shapes.medium,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                imeAction = ImeAction.Search
+            // BULLETPROOF: Using fully qualified names to bypass bad IDE auto-imports
+            keyboardOptions = androidx.compose.ui.text.input.KeyboardOptions(
+                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None,
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search
             ),
-            keyboardActions = KeyboardActions(
+            keyboardActions = androidx.compose.ui.text.input.KeyboardActions(
                 onSearch = { coroutineScope.launch { performSearch() } }
             )
         )
