@@ -13,6 +13,7 @@ import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
 
 data class CharacterPracticeData(
@@ -29,6 +30,17 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         private set
     var loadError by mutableStateOf<String?>(null)
         private set
+
+    // Queue of characters (a word is split into its characters)
+    private var characterQueue = listOf<String>()
+    var totalCharacters by mutableIntStateOf(0)
+        private set
+    var currentQueueIndex by mutableIntStateOf(0)
+        private set
+
+    val hasNextCharacter: Boolean get() = currentQueueIndex < totalCharacters - 1
+    val hasPreviousCharacter: Boolean get() = currentQueueIndex > 0
+
     var currentStrokeIndex by mutableIntStateOf(0)
         private set
     var totalErrors by mutableIntStateOf(0)
@@ -41,13 +53,40 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     private val gson = Gson()
 
+    // Entry point from SearchScreen: the string may be a single char OR a word
+    fun loadCharacters(input: String) {
+        characterQueue = input.map { it.toString() }
+        totalCharacters = characterQueue.size
+        currentQueueIndex = 0
+        if (characterQueue.isEmpty()) {
+            loadError = "No characters to practice"
+            return
+        }
+        loadCharacter(characterQueue[currentQueueIndex])
+    }
+
+    fun nextCharacter() {
+        if (hasNextCharacter) {
+            currentQueueIndex++
+            loadCharacter(characterQueue[currentQueueIndex])
+        }
+    }
+
+    fun previousCharacter() {
+        if (hasPreviousCharacter) {
+            currentQueueIndex--
+            loadCharacter(characterQueue[currentQueueIndex])
+        }
+    }
+
+    // Used by both the queue and ListPracticeScreen
     fun loadCharacter(character: String) {
         loadError = null
         practiceData = null
         viewModelScope.launch {
             try {
                 DebugLog.d("PracticeVM", "loadCharacter('$character')")
-                val charData = database.hanziDao().searchHanzi(character).firstOrNull()
+                val charData = database.hanziDao().getCharacterExact(character)
                 DebugLog.d("PracticeVM", "charData = ${charData?.character ?: "NULL"}")
                 val graphicsData = database.hanziDao().getGraphics(character)
                 DebugLog.d("PracticeVM", "graphicsData = ${if (graphicsData != null) "FOUND" else "NULL"}")
@@ -57,7 +96,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                 } else {
                     loadError = when {
                         charData == null -> "No dictionary entry for '$character'"
-                        graphicsData == null -> "No stroke graphics for '$character' (graphics table empty)"
+                        graphicsData == null -> "No stroke graphics for '$character'"
                         else -> "Unknown error"
                     }
                     DebugLog.e("PracticeVM", loadError ?: "Unknown")
@@ -73,20 +112,27 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         try {
             val type = object : TypeToken<Map<String, Any>>() {}.type
             val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
-            val strokes = (jsonMap["strokes"] as Number).toInt()
-            val radical = jsonMap["radical"] as? String
+
+            // FIX: "strokes" in graphics.txt is an ARRAY of SVG paths, not a number.
+            // The stroke count is the number of median lines.
             @Suppress("UNCHECKED_CAST")
-            val medians = jsonMap["medians"] as List<List<List<Double>>>
+            val medians = jsonMap["medians"] as? List<List<List<Double>>>
+            if (medians.isNullOrEmpty()) {
+                loadError = "No median stroke data for '$character'"
+                DebugLog.e("PracticeVM", loadError ?: "No medians")
+                return
+            }
+            val strokes = medians.size
 
             practiceData = CharacterPracticeData(
                 character = character,
                 pinyin = charData.pinyin,
                 definition = charData.definition,
-                radical = radical,
+                radical = charData.radical,   // radical comes from dictionary.txt, not graphics.txt
                 totalStrokes = strokes,
                 medians = medians
             )
-            DebugLog.d("PracticeVM", "Setup complete, strokes=$strokes")
+            DebugLog.d("PracticeVM", "Setup complete for '$character', strokes=$strokes")
             resetPractice()
         } catch (e: Exception) {
             loadError = "Parse failed: ${e.message}"
@@ -103,7 +149,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         if (currentStrokeIndex >= data.medians.size) return
 
         val expectedMedian = gson.toJson(data.medians[currentStrokeIndex])
-        val errors = com.infdesk.hanziwriting.utils.StrokeEvaluator.evaluateStroke(
+        val errors = StrokeEvaluator.evaluateStroke(
             userPoints = currentStrokePoints.toList(),
             expectedMedianJson = expectedMedian,
             canvasSize = canvasSize,
