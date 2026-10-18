@@ -10,11 +10,11 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_characters WHERE character = :query OR pinyin LIKE :query OR definition LIKE :query LIMIT 50")
     suspend fun searchHanziExact(query: String): List<HanziCharacter>
 
-    @Query("UPDATE hanzi_characters SET radical = :radical WHERE character = :character")
-    suspend fun updateRadical(character: String, radical: String)
-
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
+
+    @Query("UPDATE hanzi_characters SET radical = :radical WHERE character = :character")
+    suspend fun updateRadical(character: String, radical: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCharacters(characters: List<HanziCharacter>)
@@ -33,4 +33,10 @@ interface HanziDao {
 
     @Query("SELECT character FROM list_items WHERE listId = :listId")
     suspend fun getCharactersInList(listId: Int): List<String>
+
+    @Query("DELETE FROM hanzi_characters")
+    suspend fun clearCharacters()
+
+    @Query("DELETE FROM hanzi_graphics")
+    suspend fun clearGraphics()
 }
