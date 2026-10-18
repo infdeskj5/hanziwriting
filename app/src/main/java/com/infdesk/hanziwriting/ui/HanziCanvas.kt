@@ -22,7 +22,7 @@ fun HanziCanvas(
 ) {
     val data = viewModel.practiceData
 
-    // SAFE PATTERN: Wrap in if-block instead of early return
+    // SAFE: wrap in if-block, never use an early return in a @Composable
     if (data != null) {
         val density = LocalDensity.current
         val canvasSizePx = with(density) { 300.dp.toPx() }
@@ -69,7 +69,7 @@ fun HanziCanvas(
             val scale = size.width / 1024f
             val strokeWidth = 16f * scale
 
-            // 1. Draw Background Guide
+            // 1. Background guide (all strokes faintly)
             data.medians.forEach { strokeMedians ->
                 val path = Path()
                 strokeMedians.forEachIndexed { index, point ->
@@ -80,7 +80,7 @@ fun HanziCanvas(
                 drawPath(path, guideColor, style = Stroke(width = strokeWidth * 1.5f, cap = StrokeCap.Round))
             }
 
-            // 2. Draw Completed Correct Strokes
+            // 2. Completed correct strokes
             viewModel.completedStrokes.forEach { points ->
                 val path = Path()
                 points.forEachIndexed { index, offset ->
@@ -89,7 +89,7 @@ fun HanziCanvas(
                 drawPath(path, userColor.copy(alpha = 0.7f), style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
             }
 
-            // 3. Draw Current Active Stroke
+            // 3. Current active stroke
             if (viewModel.currentStrokePoints.isNotEmpty()) {
                 val path = Path()
                 viewModel.currentStrokePoints.forEachIndexed { index, offset ->
