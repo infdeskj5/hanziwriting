@@ -16,12 +16,13 @@ import java.io.File
 fun SettingsScreen() {
     val context = LocalContext.current
     var showExportSuccess by remember { mutableStateOf(false) }
+    var exportMessage by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.Center, // Centers content vertically
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 32.dp))
@@ -47,10 +48,11 @@ fun SettingsScreen() {
                     }
                     context.startActivity(Intent.createChooser(intent, "Export Crash Logs"))
                     CrashHandler.clearCrashLogs()
-                    showExportSuccess = true
+                    exportMessage = "Logs exported successfully!"
                 } else {
-                    showExportSuccess = true
+                    exportMessage = "No crash logs found."
                 }
+                showExportSuccess = true
             },
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) {
@@ -59,13 +61,13 @@ fun SettingsScreen() {
 
         if (showExportSuccess) {
             Text(
-                if (crashLogs.isNotEmpty()) "Logs exported successfully!" else "No crash logs found.",
+                exportMessage,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 16.dp)
             )
         }
         
-        Spacer(modifier = Modifier.weight(1f)) // Pushes the version text to the bottom
+        Spacer(modifier = Modifier.weight(1f))
         Text("Hanzi Writing v1.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
