@@ -6,6 +6,11 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+data class MakeMeAHanziData(
+    val character: String,
+    val medians: List<List<List<Double>>>
+)
+
 object AssetParser {
     suspend fun parseAndSaveDictionary(context: Context, dao: HanziDao) {
         withContext(Dispatchers.IO) {
@@ -13,7 +18,6 @@ object AssetParser {
             val reader = inputStream.bufferedReader()
             val charactersToInsert = mutableListOf<HanziCharacter>()
 
-            // FIXED: More robust regex that correctly captures multi-character words
             val regex = Regex("^(.+?)\\s+(.+?)\\s+\\[(.+?)\\]\\s+/(.+)/$")
 
             reader.useLines { lines ->
@@ -39,6 +43,35 @@ object AssetParser {
         }
     }
 
+    suspend fun parseAndSaveGraphics(context: Context, dao: HanziDao) {
+        withContext(Dispatchers.IO) {
+            val inputStream = context.assets.open("graphics.txt")
+            val reader = inputStream.bufferedReader()
+            val gson = Gson()
+            val graphicsToInsert = mutableListOf<HanziGraphics>()
+
+            reader.useLines { lines ->
+                lines.forEach { line ->
+                    if (line.isBlank()) return@forEach
+                    try {
+                        val data = gson.fromJson(line, MakeMeAHanziData::class.java)
+                        graphicsToInsert.add(
+                            HanziGraphics(
+                                character = data.character,
+                                rawJson = line
+                            )
+                        )
+                    } catch (e: Exception) {
+                        // Ignore malformed lines
+                    }
+                }
+            }
+            graphicsToInsert.chunked(1000).forEach { chunk ->
+                dao.insertGraphics(chunk)
+            }
+        }
+    }
+
     suspend fun parseAndSaveRadicals(context: Context, dao: HanziDao) {
         withContext(Dispatchers.IO) {
             val inputStream = context.assets.open("dictionary.txt")
@@ -59,35 +92,6 @@ object AssetParser {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    suspend fun parseAndSaveGraphics(context: Context, dao: HanziDao) {
-        withContext(Dispatchers.IO) {
-            val inputStream = context.assets.open("graphics.txt")
-            val reader = inputStream.bufferedReader()
-            val gson = Gson()
-            val graphicsToInsert = mutableListOf<HanziGraphics>()
-
-            reader.useLines { lines ->
-                lines.forEach { line ->
-                    if (line.isBlank()) return@forEach
-                    try {
-                        val data = gson.fromJson(line, MakeMeAHanziData::class.java)
-                        graphicsToInsert.add(
-                            HanziGraphics(
-                                character = data.character,
-                                rawJson = line // FIXED: Changed from strokesJson to rawJson
-                            )
-                        )
-                    } catch (e: Exception) {
-                        // Ignore malformed lines
-                    }
-                }
-            }
-            graphicsToInsert.chunked(1000).forEach { chunk ->
-                dao.insertGraphics(chunk)
             }
         }
     }
