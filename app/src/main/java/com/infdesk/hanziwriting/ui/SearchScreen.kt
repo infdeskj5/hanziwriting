@@ -11,10 +11,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
+import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -23,75 +29,104 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
     
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     
-    // Dialog states MUST be inside the @Composable function
     var showAddToListDialog by remember { mutableStateOf(false) }
     var characterToAdd by remember { mutableStateOf("") }
     var availableLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
 
-    // Load lists when dialog might open
     LaunchedEffect(showAddToListDialog) {
-        if (showAddToListDialog) {
-            availableLists = dao.getAllLists()
+        if (showAddToListDialog) availableLists = dao.getAllLists()
+    }
+
+    // Helper function to avoid duplicating search logic
+    val performSearch = suspend {
+        isSearching = true
+        val exactMatches = dao.searchHanziExact(searchQuery)
+        
+        // If multi-character word, also fetch its individual composing characters
+        val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
+            val chars = searchQuery.toCharArray().distinct().map { it.toString() }
+            chars.flatMap { dao.searchHanziExact(it) }
+        } else {
+            emptyList()
         }
+        
+        // Combine, remove duplicates, and prioritize the exact match at the top
+        searchResults = (exactMatches + composingMatches)
+            .distinctBy { it.character }
+            .sortedBy { it.character != searchQuery }
+            
+        isSearching = false
+        focusManager.clearFocus() // Hide keyboard after search
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(16.dp)
     ) {
+        // Push search bar to center if no results, otherwise keep it at top
+        if (searchResults.isEmpty() && !isSearching) {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             label = { Text("Search Hanzi, Pinyin, or English") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.medium
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
+            shape = MaterialTheme.shapes.medium,
+            keyboardOptions = androidx.compose.ui.text.input.KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                imeAction = ImeAction.Search
+            ),
+            keyboardActions = androidx.compose.ui.text.input.KeyboardActions(
+                onSearch = { coroutineScope.launch { performSearch() } }
+            )
         )
-        
-        Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
-            onClick = {
-                coroutineScope.launch {
-                    isSearching = true
-                    searchResults = dao.searchHanzi("%$searchQuery%")
-                    isSearching = false
+        if (searchResults.isEmpty() && !isSearching) {
+            Spacer(modifier = Modifier.weight(1f))
+        } else {
+            Spacer(modifier = Modifier.height(16.dp))
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(searchResults) { char ->
+                    HanziResultItem(
+                        character = char,
+                        onPracticeClick = { onPracticeClick(char.character) },
+                        onAddToListClick = {
+                            characterToAdd = char.character
+                            showAddToListDialog = true
+                        }
+                    )
                 }
-            },
+            }
+        }
+
+        // Search button pinned to the bottom
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = { coroutineScope.launch { performSearch() } },
             modifier = Modifier.fillMaxWidth(),
             enabled = !isSearching && searchQuery.isNotBlank(),
             shape = MaterialTheme.shapes.medium
         ) {
             Text(if (isSearching) "Searching..." else "Search")
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(searchResults) { char ->
-                HanziResultItem(
-                    character = char,
-                    onPracticeClick = { onPracticeClick(char.character) },
-                    onAddToListClick = {
-                        characterToAdd = char.character
-                        showAddToListDialog = true
-                    }
-                )
-            }
-        }
     }
 
-    // Dialog must also be inside the @Composable function
     if (showAddToListDialog) {
         AddToListDialog(
             character = characterToAdd,
@@ -121,9 +156,7 @@ fun HanziResultItem(
     onAddToListClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onPracticeClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onPracticeClick() },
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
@@ -136,32 +169,38 @@ fun HanziResultItem(
                     modifier = Modifier.padding(end = 16.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = character.pinyin, style = MaterialTheme.typography.titleMedium)
+                    // Apply Pinyin tone mark conversion here
+                    Text(
+                        text = PinyinUtils.convertToToneMarks(character.pinyin), 
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     Text(
                         text = character.definition,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2
                     )
+                    if (character.radical.isNotBlank()) {
+                        Text(
+                            text = "Radical: ${character.radical}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onAddToListClick) {
-                    Text("Add to List")
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onAddToListClick) { Text("Add to List") }
                 Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = onPracticeClick) {
-                    Text("Practice")
-                }
+                Button(onClick = onPracticeClick) { Text("Practice") }
             }
         }
     }
 }
 
+// Keep your existing AddToListDialog composable here...
 @Composable
 fun AddToListDialog(
     character: String,
@@ -189,27 +228,19 @@ fun AddToListDialog(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { 
-                            if (newListName.isNotBlank()) onCreateNew(newListName)
-                        }) {
+                        TextButton(onClick = { if (newListName.isNotBlank()) onCreateNew(newListName) }) {
                             Text("Create & Add")
                         }
                     }
                 } else {
                     LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                         items(lists) { list ->
-                            TextButton(
-                                onClick = { onAddToExisting(list.listId) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            TextButton(onClick = { onAddToExisting(list.listId) }, modifier = Modifier.fillMaxWidth()) {
                                 Text(list.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
                             }
                         }
                         item {
-                            TextButton(
-                                onClick = { showNewListInput = true },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            TextButton(onClick = { showNewListInput = true }, modifier = Modifier.fillMaxWidth()) {
                                 Text("+ Create New List", color = MaterialTheme.colorScheme.primary)
                             }
                         }
@@ -217,8 +248,6 @@ fun AddToListDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
