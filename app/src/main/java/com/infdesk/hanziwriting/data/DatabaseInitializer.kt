@@ -13,6 +13,7 @@ object DatabaseInitializer {
                 // Parse and save in the background
                 AssetParser.parseAndSaveDictionary(context, dao)
                 AssetParser.parseAndSaveGraphics(context, dao)
+                AssetParser.parseAndSaveRadicals(context, dao)
             }
         }
     }
