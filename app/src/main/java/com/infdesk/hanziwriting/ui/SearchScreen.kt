@@ -16,6 +16,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardActions
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.ListItem
@@ -44,12 +46,10 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
         if (showAddToListDialog) availableLists = dao.getAllLists()
     }
 
-    // Helper function to avoid duplicating search logic
     val performSearch = suspend {
         isSearching = true
         val exactMatches = dao.searchHanziExact(searchQuery)
         
-        // If multi-character word, also fetch its individual composing characters
         val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
             val chars = searchQuery.toCharArray().distinct().map { it.toString() }
             chars.flatMap { dao.searchHanziExact(it) }
@@ -57,13 +57,12 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             emptyList()
         }
         
-        // Combine, remove duplicates, and prioritize the exact match at the top
         searchResults = (exactMatches + composingMatches)
             .distinctBy { it.character }
             .sortedBy { it.character != searchQuery }
             
         isSearching = false
-        focusManager.clearFocus() // Hide keyboard after search
+        focusManager.clearFocus()
     }
 
     Column(
@@ -71,7 +70,6 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Push search bar to center if no results, otherwise keep it at top
         if (searchResults.isEmpty() && !isSearching) {
             Spacer(modifier = Modifier.weight(1f))
         }
@@ -85,11 +83,11 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
                 .fillMaxWidth()
                 .focusRequester(focusRequester),
             shape = MaterialTheme.shapes.medium,
-            keyboardOptions = androidx.compose.ui.text.input.KeyboardOptions(
+            keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.None,
                 imeAction = ImeAction.Search
             ),
-            keyboardActions = androidx.compose.ui.text.input.KeyboardActions(
+            keyboardActions = KeyboardActions(
                 onSearch = { coroutineScope.launch { performSearch() } }
             )
         )
@@ -115,7 +113,6 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             }
         }
 
-        // Search button pinned to the bottom
         Spacer(modifier = Modifier.height(16.dp))
         Button(
             onClick = { coroutineScope.launch { performSearch() } },
@@ -169,7 +166,6 @@ fun HanziResultItem(
                     modifier = Modifier.padding(end = 16.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    // Apply Pinyin tone mark conversion here
                     Text(
                         text = PinyinUtils.convertToToneMarks(character.pinyin), 
                         style = MaterialTheme.typography.titleMedium
@@ -200,7 +196,6 @@ fun HanziResultItem(
     }
 }
 
-// Keep your existing AddToListDialog composable here...
 @Composable
 fun AddToListDialog(
     character: String,
