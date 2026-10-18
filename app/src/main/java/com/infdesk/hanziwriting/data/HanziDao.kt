@@ -10,6 +10,9 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_characters WHERE character = :query OR pinyin LIKE :query OR definition LIKE :query LIMIT 50")
     suspend fun searchHanziExact(query: String): List<HanziCharacter>
 
+    @Query("SELECT * FROM hanzi_characters WHERE character = :character LIMIT 1")
+    suspend fun getCharacterExact(character: String): HanziCharacter?
+
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
