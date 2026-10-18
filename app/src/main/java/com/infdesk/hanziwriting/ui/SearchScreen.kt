@@ -4,18 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
@@ -23,6 +16,7 @@ import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.PinyinUtils
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,8 +25,6 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
-    val focusRequester = remember { FocusRequester() }
     
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
@@ -46,23 +38,25 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
         if (showAddToListDialog) availableLists = dao.getAllLists()
     }
 
-    val performSearch = suspend {
-        isSearching = true
-        val exactMatches = dao.searchHanziExact(searchQuery)
-        
-        val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
-            val chars = searchQuery.toCharArray().distinct().map { it.toString() }
-            chars.flatMap { dao.searchHanziExact(it) }
+    // AUTOMATIC DEBOUNCED SEARCH
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            delay(300) // Wait 300ms after user stops typing
+            isSearching = true
+            val exactMatches = dao.searchHanziExact(searchQuery)
+            val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
+                val chars = searchQuery.toCharArray().distinct().map { it.toString() }
+                chars.flatMap { dao.searchHanziExact(it) }
+            } else {
+                emptyList()
+            }
+            searchResults = (exactMatches + composingMatches)
+                .distinctBy { it.character }
+                .sortedBy { it.character != searchQuery }
+            isSearching = false
         } else {
-            emptyList()
+            searchResults = emptyList()
         }
-        
-        searchResults = (exactMatches + composingMatches)
-            .distinctBy { it.character }
-            .sortedBy { it.character != searchQuery }
-            
-        isSearching = false
-        focusManager.clearFocus()
     }
 
     Column(
@@ -70,58 +64,34 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        if (searchResults.isEmpty() && !isSearching) {
-            Spacer(modifier = Modifier.weight(1f))
-        }
-
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text("Search Hanzi, Pinyin, or English") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester),
-            shape = MaterialTheme.shapes.medium,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = { coroutineScope.launch { performSearch() } }
-            )
-        )
-
-        if (searchResults.isEmpty() && !isSearching) {
-            Spacer(modifier = Modifier.weight(1f))
-        } else {
-            Spacer(modifier = Modifier.height(16.dp))
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(searchResults) { char ->
-                    HanziResultItem(
-                        character = char,
-                        onPracticeClick = { onPracticeClick(char.character) },
-                        onAddToListClick = {
-                            characterToAdd = char.character
-                            showAddToListDialog = true
-                        }
-                    )
-                }
+        // Results take up all available space, pushing the search bar to the bottom
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(searchResults) { char ->
+                HanziResultItem(
+                    character = char,
+                    onPracticeClick = { onPracticeClick(char.character) },
+                    onAddToListClick = {
+                        characterToAdd = char.character
+                        showAddToListDialog = true
+                    }
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = { coroutineScope.launch { performSearch() } },
+
+        // Search bar pinned to the bottom (above the navigation bar)
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text(if (isSearching) "Searching..." else "Search Hanzi, Pinyin, or English") },
+            singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isSearching && searchQuery.isNotBlank(),
             shape = MaterialTheme.shapes.medium
-        ) {
-            Text(if (isSearching) "Searching..." else "Search")
-        }
+        )
     }
 
     if (showAddToListDialog) {
