@@ -15,21 +15,21 @@ import com.infdesk.hanziwriting.data.DatabaseInitializer
 import com.infdesk.hanziwriting.ui.MainScreen
 import com.infdesk.hanziwriting.utils.CrashHandler
 import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.ProgressStore
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashHandler.init(this)
         DebugLog.init(this)
+        ProgressStore.init(this)
 
         setContent {
             val context = LocalContext.current
-
             LaunchedEffect(Unit) {
                 val db = AppDatabase.getDatabase(context)
                 DatabaseInitializer.initializeIfNeeded(context, db)
             }
-
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MainScreen()
