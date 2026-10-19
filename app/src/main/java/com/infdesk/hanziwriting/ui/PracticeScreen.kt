@@ -33,15 +33,19 @@ fun PracticeScreen(
     val data = viewModel.practiceData
     val error = viewModel.loadError
 
+    val guideLabel = when (viewModel.guideLevel) {
+        0 -> "Guide: Full"
+        1 -> "Guide: Faded"
+        2 -> "Guide: Hidden"
+        else -> "Memory Mode"
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top bar: exit + position (only element at the top; frequent controls stay at the bottom)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        // Top bar: exit + position
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBackClick) {
                 Icon(Icons.Default.Close, contentDescription = "Exit practice")
             }
@@ -54,16 +58,12 @@ fun PracticeScreen(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            // Invisible spacer to balance the close button
             Spacer(modifier = Modifier.width(48.dp))
         }
 
         when {
             error != null -> {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Could not load character", style = MaterialTheme.typography.titleLarge)
                         Spacer(modifier = Modifier.height(8.dp))
@@ -83,21 +83,22 @@ fun PracticeScreen(
                 }
             }
             data == null -> {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             }
             else -> {
-                // Character info card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
+                        // In memory mode (level 3), hide the character glyph
+                        Text(
+                            if (viewModel.guideLevel >= 3) "?" else data.character,
+                            style = MaterialTheme.typography.displayLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         Text(
                             PinyinUtils.convertToToneMarks(data.pinyin),
                             style = MaterialTheme.typography.titleMedium,
@@ -119,22 +120,15 @@ fun PracticeScreen(
                 HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Bottom controls (thumb-reachable)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text(
-                            "Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            "Errors: ${viewModel.totalErrors}",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                        Text("Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}", style = MaterialTheme.typography.bodyLarge)
+                        Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+                        Text(guideLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (viewModel.hasPreviousCharacter) {
@@ -143,12 +137,15 @@ fun PracticeScreen(
                             }
                         }
                         OutlinedButton(
-                            onClick = { viewModel.resetPractice() },
+                            onClick = {
+                                if (viewModel.isCompleted) viewModel.practiceAgain()
+                                else viewModel.resetPractice()
+                            },
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Reset")
+                            Icon(Icons.Default.Refresh, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Reset")
+                            Text(if (viewModel.isCompleted) "Again" else "Reset")
                         }
                         if (viewModel.isCompleted) {
                             Spacer(Modifier.width(8.dp))
