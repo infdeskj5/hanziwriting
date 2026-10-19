@@ -1,6 +1,8 @@
 package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
@@ -40,19 +42,19 @@ fun PracticeScreen(
         else -> "Memory Mode"
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Top bar: exit + position
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top bar
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             IconButton(onClick = onBackClick) {
                 Icon(Icons.Default.Close, contentDescription = "Exit practice")
             }
             Spacer(modifier = Modifier.weight(1f))
             if (viewModel.totalCharacters > 1) {
                 Text(
-                    "Character ${viewModel.currentQueueIndex + 1} of ${viewModel.totalCharacters}",
+                    "${viewModel.currentQueueIndex + 1} / ${viewModel.totalCharacters}",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -69,16 +71,7 @@ fun PracticeScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            if (viewModel.hasPreviousCharacter) {
-                                OutlinedButton(onClick = { viewModel.previousCharacter() }) { Text("Previous") }
-                            }
-                            if (viewModel.hasNextCharacter) {
-                                Button(onClick = { viewModel.nextCharacter() }) { Text("Next") }
-                            } else {
-                                Button(onClick = onBackClick) { Text("Go Back") }
-                            }
-                        }
+                        Button(onClick = onBackClick) { Text("Go Back") }
                     }
                 }
             }
@@ -88,46 +81,70 @@ fun PracticeScreen(
                 }
             }
             else -> {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                // Scrollable middle section to prevent bottom cut-off
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        // In memory mode (level 3), hide the character glyph
-                        Text(
-                            if (viewModel.guideLevel >= 3) "?" else data.character,
-                            style = MaterialTheme.typography.displayLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            PinyinUtils.convertToToneMarks(data.pinyin),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                        if (!data.radical.isNullOrBlank()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            // Hide character text in memory mode (no "?" symbol)
                             Text(
-                                "Radical: ${data.radical}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.padding(top = 4.dp)
+                                if (viewModel.guideLevel >= 3) " " else data.character,
+                                style = MaterialTheme.typography.displayLarge,
+                                color = MaterialTheme.colorScheme.primary
                             )
+                            Text(
+                                PinyinUtils.convertToToneMarks(data.pinyin),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                            
+                            // Show all components/radicals
+                            if (data.components.isNotEmpty()) {
+                                Text(
+                                    "Components: ${data.components.joinToString(", ")}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            } else if (!data.radical.isNullOrBlank()) {
+                                Text(
+                                    "Radical: ${data.radical}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-                HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
-                Spacer(modifier = Modifier.height(16.dp))
-
+                // Pinned bottom controls
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("Stroke: ${viewModel.currentStrokeIndex + 1}/${data.totalStrokes}", style = MaterialTheme.typography.bodyLarge)
-                        Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+                        // FIX: Cap stroke display at totalStrokes
+                        Text(
+                            "Stroke: ${minOf(viewModel.currentStrokeIndex + 1, data.totalStrokes)}/${data.totalStrokes}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            "Errors: ${viewModel.totalErrors}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                         Text(guideLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -159,11 +176,12 @@ fun PracticeScreen(
                                     Icon(Icons.Default.ArrowForward, contentDescription = null)
                                 }
                             } else {
+                                // Stay on screen, no "Done" button that exits
                                 Button(
-                                    onClick = onBackClick,
+                                    onClick = { viewModel.practiceAgain() },
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                                 ) {
-                                    Text("Done!")
+                                    Text("Again")
                                 }
                             }
                         }
