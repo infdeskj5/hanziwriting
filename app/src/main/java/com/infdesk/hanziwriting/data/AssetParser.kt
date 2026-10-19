@@ -8,7 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object AssetParser {
-
     suspend fun parseAndSaveDictionary(context: Context, dao: HanziDao) {
         withContext(Dispatchers.IO) {
             val reader = context.assets.open("cedict_ts.u8").bufferedReader()
@@ -26,7 +25,8 @@ object AssetParser {
                                 character = simplified,
                                 pinyin = pinyin,
                                 definition = definition.replace("/", ", "),
-                                radical = ""
+                                radical = "",
+                                decomposition = "" // Will be updated by radicals parser
                             )
                         )
                     }
@@ -71,12 +71,13 @@ object AssetParser {
                         val json = gson.fromJson(line, JsonObject::class.java)
                         val character = json.get("character")?.asString ?: return@forEach
                         val radical = json.get("radical")?.asString ?: ""
-                        dao.updateRadical(character, radical)
+                        val decomposition = json.get("decomposition")?.asString ?: ""
+                        dao.updateRadicalAndDecomp(character, radical, decomposition)
                         count++
                     } catch (_: Exception) { }
                 }
             }
-            DebugLog.d("AssetParser", "Radicals: updated $count entries")
+            DebugLog.d("AssetParser", "Radicals/Decomp: updated $count entries")
         }
     }
 }
