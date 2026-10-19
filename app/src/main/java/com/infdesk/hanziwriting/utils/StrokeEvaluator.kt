@@ -4,20 +4,35 @@ import androidx.compose.ui.geometry.Offset
 import kotlin.math.sqrt
 
 object StrokeEvaluator {
-    // Both point lists are in canvas pixel coordinates.
-    fun evaluateStroke(userPoints: List<Offset>, expectedPoints: List<Offset>, threshold: Float): Int {
-        if (userPoints.size < 2 || expectedPoints.isEmpty()) return userPoints.size
-        var errorCount = 0
-        for (u in userPoints) {
-            var minDist = Float.MAX_VALUE
-            for (e in expectedPoints) {
-                val dx = u.x - e.x
-                val dy = u.y - e.y
-                val d = sqrt(dx * dx + dy * dy)
-                if (d < minDist) minDist = d
-            }
-            if (minDist > threshold) errorCount++
+    fun evaluateStroke(userPoints: List<Offset>, expectedPoints: List<Offset>, canvasSize: Float): Boolean {
+        if (userPoints.size < 3 || expectedPoints.size < 2) return false
+        
+        val leniency = canvasSize * 0.15f // 15% of canvas size
+        
+        // 1. Check start point proximity
+        if (userPoints.first().distanceTo(expectedPoints.first()) > leniency) return false
+        
+        // 2. Check end point proximity
+        if (userPoints.last().distanceTo(expectedPoints.last()) > leniency) return false
+        
+        // 3. Check overall path average distance
+        var totalDist = 0f
+        val sampleRate = maxOf(1, userPoints.size / 20)
+        var sampledCount = 0
+        for (i in userPoints.indices step sampleRate) {
+            val u = userPoints[i]
+            val minDist = expectedPoints.minOf { e -> u.distanceTo(e) }
+            totalDist += minDist
+            sampledCount++
         }
-        return errorCount
+        val avgDist = totalDist / sampledCount
+        
+        return avgDist < leniency
+    }
+    
+    private fun Offset.distanceTo(other: Offset): Float {
+        val dx = this.x - other.x
+        val dy = this.y - other.y
+        return sqrt(dx * dx + dy * dy)
     }
 }
