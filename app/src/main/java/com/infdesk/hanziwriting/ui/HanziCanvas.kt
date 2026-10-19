@@ -1,14 +1,18 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -28,16 +32,15 @@ fun HanziCanvas(
 ) {
     val data = viewModel.practiceData
 
-    // SAFE: wrap in if-block, never use an early return in a @Composable
     if (data != null) {
         val density = LocalDensity.current
         val canvasSizePx = with(density) { 300.dp.toPx() }
         val scale = canvasSizePx / HanziTransform.GRID_WIDTH
 
-        // Read all theme colors OUTSIDE the draw lambda
         val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
         val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.08f)
         val userColor = MaterialTheme.colorScheme.primary
+        val hintColor = MaterialTheme.colorScheme.tertiary
 
         val guideAlpha = when (viewModel.guideLevel) {
             0 -> 0.25f
@@ -46,7 +49,6 @@ fun HanziCanvas(
         }
         val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = guideAlpha)
 
-        // Parse & transform the SVG stroke shapes once (cached across recompositions)
         val svgPaths: List<Path> = remember(data, canvasSizePx) {
             data.strokes.mapNotNull { svg ->
                 try {
@@ -58,6 +60,12 @@ fun HanziCanvas(
                 }
             }
         }
+
+        // Animation state for the current animating stroke
+        val animatedProgress by animateFloatAsState(
+            targetValue = viewModel.animationProgress,
+            animationSpec = tween(durationMillis = 600)
+        )
 
         Canvas(
             modifier = modifier
@@ -93,32 +101,34 @@ fun HanziCanvas(
                     )
                 }
         ) {
-            // 1. Practice grid (米字格) — subtle
+            // 1. Practice grid
             drawLine(gridColor, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), strokeWidth = 2f)
             drawLine(gridColor, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 2f)
             drawLine(gridColor, Offset(0f, 0f), Offset(size.width, size.height), strokeWidth = 1.5f)
             drawLine(gridColor, Offset(size.width, 0f), Offset(0f, size.height), strokeWidth = 1.5f)
 
-            // 2. Guide (depends on guide level)
-            if (guideAlpha > 0f) {
-                if (svgPaths.isNotEmpty()) {
-                    // Beautiful calligraphic stroke shapes
-                    svgPaths.forEach { drawPath(it, guideColor, style = Fill) }
-                } else {
-                    // Fallback: thick, rounded median lines
-                    val guideWidth = size.width * 0.09f
-                    data.medians.forEach { strokeMedians ->
-                        val path = Path()
-                        strokeMedians.forEachIndexed { i, pt ->
-                            val cp = HanziTransform.toCanvas(pt, scale)
-                            if (i == 0) path.moveTo(cp.x, cp.y) else path.lineTo(cp.x, cp.y)
-                        }
-                        drawPath(path, guideColor, style = Stroke(width = guideWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                    }
+            // 2. Guide strokes (SVG paths)
+            if (guideAlpha > 0f && svgPaths.size == data.strokes.size) {
+                svgPaths.forEach { path ->
+                    drawPath(path, guideColor, style = Fill)
                 }
             }
 
-            // 3. Completed correct strokes (rounded, smooth)
+            // 3. Hint (if mistakes >= 3 on current stroke)
+            if (viewModel.mistakesOnCurrentStroke >= 3 && viewModel.currentStrokeIndex < svgPaths.size) {
+                drawPath(svgPaths[viewModel.currentStrokeIndex], hintColor.copy(alpha = 0.6f), style = Fill)
+            }
+
+            // 4. Animated stroke
+            if (viewModel.animatedStrokeIndex >= 0 && viewModel.animatedStrokeIndex < svgPaths.size) {
+                val pathMeasure = androidx.compose.ui.graphics.PathMeasure()
+                pathMeasure.setPath(svgPaths[viewModel.animatedStrokeIndex], false)
+                val partialPath = Path()
+                pathMeasure.getSegment(0f, pathMeasure.length * animatedProgress, partialPath, true)
+                drawPath(partialPath, userColor, style = Fill)
+            }
+
+            // 5. Completed user strokes
             val userStrokeWidth = size.width * 0.055f
             viewModel.completedStrokes.forEach { points ->
                 val path = Path()
@@ -128,7 +138,7 @@ fun HanziCanvas(
                 drawPath(path, userColor.copy(alpha = 0.75f), style = Stroke(width = userStrokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
 
-            // 4. Current active stroke
+            // 6. Current active stroke
             if (viewModel.currentStrokePoints.isNotEmpty()) {
                 val path = Path()
                 viewModel.currentStrokePoints.forEachIndexed { i, off ->
