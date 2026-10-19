@@ -16,6 +16,7 @@ import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 data class CharacterPracticeData(
@@ -23,9 +24,10 @@ data class CharacterPracticeData(
     val pinyin: String,
     val definition: String,
     val radical: String?,
+    val components: List<String>, // Extracted from decomposition
     val totalStrokes: Int,
     val medians: List<List<List<Double>>>,
-    val strokes: List<String>   // SVG path data for the beautiful stroke shapes
+    val strokes: List<String>
 )
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
@@ -34,7 +36,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     var loadError by mutableStateOf<String?>(null)
         private set
 
-    // 0 = full guide, 1 = faded guide, 2 = hidden guide, 3 = memory mode
     var guideLevel by mutableIntStateOf(0)
         private set
 
@@ -49,9 +50,17 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     var currentStrokeIndex by mutableIntStateOf(0)
         private set
+    var mistakesOnCurrentStroke by mutableIntStateOf(0)
+        private set
     var totalErrors by mutableIntStateOf(0)
         private set
     var isCompleted by mutableStateOf(false)
+        private set
+
+    // Animation state
+    var animatedStrokeIndex by mutableIntStateOf(-1)
+        private set
+    var animationProgress by mutableStateOf(1f)
         private set
 
     val currentStrokePoints = mutableStateListOf<Offset>()
@@ -93,6 +102,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                 val graphicsData = database.hanziDao().getGraphics(character)
                 if (charData != null && graphicsData != null) {
                     parseGraphicsAndSetup(character, charData, graphicsData.rawJson)
+                    playAnimation() // Auto-play animation on load
                 } else {
                     loadError = when {
                         charData == null -> "No dictionary entry for '$character'"
@@ -122,6 +132,10 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
             @Suppress("UNCHECKED_CAST")
             val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
 
+            // Extract components from IDS decomposition string
+            val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
+            val components = charData.decomposition.filter { it !in idsSymbols }.map { it.toString() }.distinct()
+
             val successCount = ProgressStore.getSuccessCount(character)
             guideLevel = computeGuideLevel(successCount)
 
@@ -130,6 +144,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                 pinyin = charData.pinyin,
                 definition = charData.definition,
                 radical = charData.radical,
+                components = components,
                 totalStrokes = medians.size,
                 medians = medians,
                 strokes = strokes
@@ -142,10 +157,24 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     }
 
     private fun computeGuideLevel(successCount: Int): Int = when {
-        successCount <= 0 -> 0   // full guide
-        successCount == 1 -> 1   // faded guide
-        successCount == 2 -> 2   // hidden guide, character shown as reference
-        else -> 3               // memory mode: no guide, character hidden
+        successCount <= 0 -> 0   // Full guide
+        successCount == 1 -> 1   // Faded guide
+        successCount == 2 -> 2   // Hidden guide
+        else -> 3               // Memory mode (no guide, no character text)
+    }
+
+    fun playAnimation() {
+        viewModelScope.launch {
+            val data = practiceData ?: return@launch
+            for (i in 0 until data.totalStrokes) {
+                animatedStrokeIndex = i
+                animationProgress = 0f
+                delay(50) // Allow recomposition to catch up
+                animationProgress = 1f
+                delay(650) // Animation duration + pause
+            }
+            animatedStrokeIndex = -1
+        }
     }
 
     fun addPointToCurrentStroke(point: Offset) {
@@ -159,29 +188,28 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         val scale = canvasSize / HanziTransform.GRID_WIDTH
         val expectedCanvasPoints = data.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
 
-        // Forgiving evaluation: generous threshold + allow over half the points to be off
-        val errors = StrokeEvaluator.evaluateStroke(
+        val isCorrect = StrokeEvaluator.evaluateStroke(
             userPoints = currentStrokePoints.toList(),
             expectedPoints = expectedCanvasPoints,
-            threshold = canvasSize * 0.15f
+            canvasSize = canvasSize
         )
-        val maxAllowedErrors = (currentStrokePoints.size * 0.55f).toInt()
 
-        if (errors <= maxAllowedErrors && currentStrokePoints.size > 3) {
+        if (isCorrect) {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
+            mistakesOnCurrentStroke = 0
             if (currentStrokeIndex >= data.totalStrokes) {
                 isCompleted = true
                 ProgressStore.incrementSuccess(data.character)
             }
         } else {
+            mistakesOnCurrentStroke++
             totalErrors++
             currentStrokePoints.clear()
         }
     }
 
-    // Re-practice the current character at its (now higher) difficulty
     fun practiceAgain() {
         val data = practiceData ?: return
         val successCount = ProgressStore.getSuccessCount(data.character)
@@ -192,6 +220,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     fun resetPractice() {
         currentStrokeIndex = 0
         totalErrors = 0
+        mistakesOnCurrentStroke = 0
         isCompleted = false
         currentStrokePoints.clear()
         completedStrokes.clear()
