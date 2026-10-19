@@ -9,7 +9,8 @@ import kotlinx.coroutines.withContext
 object DatabaseInitializer {
     private const val PREFS_NAME = "hanzi_init"
     private const val KEY_INIT_VERSION = "init_version"
-    private const val CURRENT_INIT_VERSION = 1
+    // Bumped to 2 to force re-parsing with the new decomposition field
+    private const val CURRENT_INIT_VERSION = 2 
 
     suspend fun initializeIfNeeded(context: Context, database: AppDatabase) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -37,7 +38,7 @@ object DatabaseInitializer {
                 AppState.initProgress = 0.45f
                 AssetParser.parseAndSaveGraphics(context, dao)
 
-                AppState.initMessage = "Loading radicals…"
+                AppState.initMessage = "Loading radicals & components…"
                 AppState.initProgress = 0.80f
                 AssetParser.parseAndSaveRadicals(context, dao)
 
