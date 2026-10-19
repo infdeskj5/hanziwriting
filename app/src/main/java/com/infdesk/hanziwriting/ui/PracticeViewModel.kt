@@ -13,6 +13,8 @@ import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.HanziTransform
+import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
 
@@ -22,7 +24,8 @@ data class CharacterPracticeData(
     val definition: String,
     val radical: String?,
     val totalStrokes: Int,
-    val medians: List<List<List<Double>>>
+    val medians: List<List<List<Double>>>,
+    val strokes: List<String>   // SVG path data for the beautiful stroke shapes
 )
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
@@ -31,7 +34,10 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     var loadError by mutableStateOf<String?>(null)
         private set
 
-    // Queue of characters (a word is split into its characters)
+    // 0 = full guide, 1 = faded guide, 2 = hidden guide, 3 = memory mode
+    var guideLevel by mutableIntStateOf(0)
+        private set
+
     private var characterQueue = listOf<String>()
     var totalCharacters by mutableIntStateOf(0)
         private set
@@ -53,7 +59,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     private val gson = Gson()
 
-    // Entry point from SearchScreen: the string may be a single char OR a word
     fun loadCharacters(input: String) {
         characterQueue = input.map { it.toString() }
         totalCharacters = characterQueue.size
@@ -79,18 +84,13 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         }
     }
 
-    // Used by both the queue and ListPracticeScreen
     fun loadCharacter(character: String) {
         loadError = null
         practiceData = null
         viewModelScope.launch {
             try {
-                DebugLog.d("PracticeVM", "loadCharacter('$character')")
                 val charData = database.hanziDao().getCharacterExact(character)
-                DebugLog.d("PracticeVM", "charData = ${charData?.character ?: "NULL"}")
                 val graphicsData = database.hanziDao().getGraphics(character)
-                DebugLog.d("PracticeVM", "graphicsData = ${if (graphicsData != null) "FOUND" else "NULL"}")
-
                 if (charData != null && graphicsData != null) {
                     parseGraphicsAndSetup(character, charData, graphicsData.rawJson)
                 } else {
@@ -113,31 +113,39 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
             val type = object : TypeToken<Map<String, Any>>() {}.type
             val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
 
-            // FIX: "strokes" in graphics.txt is an ARRAY of SVG paths, not a number.
-            // The stroke count is the number of median lines.
             @Suppress("UNCHECKED_CAST")
             val medians = jsonMap["medians"] as? List<List<List<Double>>>
             if (medians.isNullOrEmpty()) {
                 loadError = "No median stroke data for '$character'"
-                DebugLog.e("PracticeVM", loadError ?: "No medians")
                 return
             }
-            val strokes = medians.size
+            @Suppress("UNCHECKED_CAST")
+            val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
+
+            val successCount = ProgressStore.getSuccessCount(character)
+            guideLevel = computeGuideLevel(successCount)
 
             practiceData = CharacterPracticeData(
                 character = character,
                 pinyin = charData.pinyin,
                 definition = charData.definition,
-                radical = charData.radical,   // radical comes from dictionary.txt, not graphics.txt
-                totalStrokes = strokes,
-                medians = medians
+                radical = charData.radical,
+                totalStrokes = medians.size,
+                medians = medians,
+                strokes = strokes
             )
-            DebugLog.d("PracticeVM", "Setup complete for '$character', strokes=$strokes")
             resetPractice()
         } catch (e: Exception) {
             loadError = "Parse failed: ${e.message}"
             DebugLog.e("PracticeVM", "parseGraphicsAndSetup failed", e)
         }
+    }
+
+    private fun computeGuideLevel(successCount: Int): Int = when {
+        successCount <= 0 -> 0   // full guide
+        successCount == 1 -> 1   // faded guide
+        successCount == 2 -> 2   // hidden guide, character shown as reference
+        else -> 3               // memory mode: no guide, character hidden
     }
 
     fun addPointToCurrentStroke(point: Offset) {
@@ -148,24 +156,37 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         val data = practiceData ?: return
         if (currentStrokeIndex >= data.medians.size) return
 
-        val expectedMedian = gson.toJson(data.medians[currentStrokeIndex])
+        val scale = canvasSize / HanziTransform.GRID_WIDTH
+        val expectedCanvasPoints = data.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
+
+        // Forgiving evaluation: generous threshold + allow over half the points to be off
         val errors = StrokeEvaluator.evaluateStroke(
             userPoints = currentStrokePoints.toList(),
-            expectedMedianJson = expectedMedian,
-            canvasSize = canvasSize,
-            threshold = 60f
+            expectedPoints = expectedCanvasPoints,
+            threshold = canvasSize * 0.15f
         )
-        val maxAllowedErrors = (currentStrokePoints.size * 0.4).toInt()
+        val maxAllowedErrors = (currentStrokePoints.size * 0.55f).toInt()
 
-        if (errors <= maxAllowedErrors && currentStrokePoints.size > 5) {
+        if (errors <= maxAllowedErrors && currentStrokePoints.size > 3) {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-            if (currentStrokeIndex >= data.totalStrokes) isCompleted = true
+            if (currentStrokeIndex >= data.totalStrokes) {
+                isCompleted = true
+                ProgressStore.incrementSuccess(data.character)
+            }
         } else {
             totalErrors++
             currentStrokePoints.clear()
         }
+    }
+
+    // Re-practice the current character at its (now higher) difficulty
+    fun practiceAgain() {
+        val data = practiceData ?: return
+        val successCount = ProgressStore.getSuccessCount(data.character)
+        guideLevel = computeGuideLevel(successCount)
+        resetPractice()
     }
 
     fun resetPractice() {
