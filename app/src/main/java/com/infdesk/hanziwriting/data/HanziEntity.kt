@@ -8,13 +8,14 @@ data class HanziCharacter(
     @PrimaryKey val character: String,
     val pinyin: String,
     val definition: String,
-    val radical: String = "" // Changed from radicals to radical
+    val radical: String = "",
+    val decomposition: String = "" // Stores IDS sequence like "⿰亻⿱夂彡"
 )
 
 @Entity(tableName = "hanzi_graphics")
 data class HanziGraphics(
     @PrimaryKey val character: String,
-    val rawJson: String // Ensure this is rawJson, not strokesJson
+    val rawJson: String
 )
 
 @Entity(tableName = "practice_lists")
