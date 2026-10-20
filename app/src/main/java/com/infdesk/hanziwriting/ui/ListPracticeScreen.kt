@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp // <-- ADDED THIS MISSING IMPORT
 import com.infdesk.hanziwriting.data.AppDatabase
 import kotlinx.coroutines.launch
 
