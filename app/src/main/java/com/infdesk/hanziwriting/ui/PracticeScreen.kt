@@ -4,10 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,171 +17,157 @@ import com.infdesk.hanziwriting.utils.PinyinUtils
 
 @Composable
 fun PracticeScreen(
-    characterToPractice: String? = null,
+    wordToPractice: String? = null,
     onBackClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val viewModel = remember { PracticeViewModel(AppDatabase.getDatabase(context)) }
 
-    LaunchedEffect(characterToPractice) {
-        if (characterToPractice != null) {
-            viewModel.loadCharacters(characterToPractice)
+    LaunchedEffect(wordToPractice) {
+        if (wordToPractice != null) {
+            viewModel.loadCharacters(wordToPractice)
         }
     }
 
-    val data = viewModel.practiceData
-    val error = viewModel.loadError
+    val currentChar = viewModel.currentChar
+    val phase = viewModel.currentPhase
 
-    val guideLabel = when (viewModel.guideLevel) {
-        0 -> "Guide: Full"
-        1 -> "Guide: Faded"
-        2 -> "Guide: Hidden"
-        else -> "Memory Mode"
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Top bar
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Top Bar
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBackClick) {
                 Icon(Icons.Default.Close, contentDescription = "Exit practice")
             }
             Spacer(modifier = Modifier.weight(1f))
-            if (viewModel.totalCharacters > 1) {
-                Text(
-                    "${viewModel.currentQueueIndex + 1} / ${viewModel.totalCharacters}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+            Text(
+                "Phase ${viewModel.globalPhaseIndex + 1}/5 - Char ${viewModel.currentCharIndex + 1}/${viewModel.characters.size}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.width(48.dp))
         }
 
-        when {
-            error != null -> {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Could not load character", style = MaterialTheme.typography.titleLarge)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(error, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = onBackClick) { Text("Go Back") }
-                    }
+        if (currentChar == null || currentChar.charData == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return
+        }
+
+        val data = currentChar.charData!!
+
+        // 1. TOP BLOCK (Fixed height 120.dp)
+        Box(
+            modifier = Modifier.height(120.dp).fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            when (phase) {
+                PracticePhase.ANIMATION -> {
+                    AnimationCanvas(
+                        medians = currentChar.medians,
+                        modifier = Modifier.size(100.dp),
+                        autoPlay = true,
+                        onComplete = { viewModel.onPhaseComplete() } // Auto advance when animation finishes
+                    )
+                }
+                PracticePhase.TRACE_WITH_TEMPLATE -> {
+                    Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
+                }
+                PracticePhase.STRUCTURE_QUIZ -> {
+                    StructureCanvas(
+                        decomposition = data.decomposition,
+                        activeIndex = currentChar.selectedComponents.size,
+                        filledComponents = currentChar.selectedComponents,
+                        modifier = Modifier.size(100.dp)
+                    )
+                }
+                PracticePhase.TRACE_BLIND_TEMPLATE -> {
+                    Text("Draw with template", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                PracticePhase.MEMORY_DRAW -> {
+                    Text("Draw from memory", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
                 }
             }
-            data == null -> {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 2. DEFINITION BLOCK (Scrollable, max height 80.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 80.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
+                Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
             }
-            else -> {
-                // Scrollable middle section to prevent bottom cut-off
-                Column(
-                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 3. CANVAS (Takes all remaining space!)
+        val showTemplate = phase == PracticePhase.TRACE_WITH_TEMPLATE || phase == PracticePhase.TRACE_BLIND_TEMPLATE
+        
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            HanziCanvas(
+                viewModel = viewModel,
+                showTemplate = showTemplate,
+                modifier = Modifier.size(300.dp) // Fixed size for drawing area
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 4. BOTTOM CONTROLS
+        if (phase == PracticePhase.STRUCTURE_QUIZ) {
+            // Radical options
+            val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
+            val correctComponents = data.decomposition.filter { it !in idsSymbols }.map { it.toString() }.distinct()
+            val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
+            val options = remember(correctComponents) {
+                (correctComponents + distractors.shuffled().take(4)).shuffled()
+            }
+            
+            Text("Select components in order:", style = MaterialTheme.typography.labelLarge)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                options.forEach { comp ->
+                    Button(
+                        onClick = { viewModel.selectComponent(comp) },
+                        enabled = !currentChar.selectedComponents.contains(comp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            // Hide character text in memory mode (no "?" symbol)
-                            Text(
-                                if (viewModel.guideLevel >= 3) " " else data.character,
-                                style = MaterialTheme.typography.displayLarge,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                PinyinUtils.convertToToneMarks(data.pinyin),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(data.definition, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                            
-                            // Show all components/radicals
-                            if (data.components.isNotEmpty()) {
-                                Text(
-                                    "Components: ${data.components.joinToString(", ")}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                )
-                            } else if (!data.radical.isNullOrBlank()) {
-                                Text(
-                                    "Radical: ${data.radical}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
-                            }
-                        }
+                        Text(comp, style = MaterialTheme.typography.titleMedium)
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HanziCanvas(viewModel = viewModel, modifier = Modifier.align(Alignment.CenterHorizontally))
-                    Spacer(modifier = Modifier.height(16.dp))
                 }
-
-                // Pinned bottom controls
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        // FIX: Cap stroke display at totalStrokes
-                        Text(
-                            "Stroke: ${minOf(viewModel.currentStrokeIndex + 1, data.totalStrokes)}/${data.totalStrokes}",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            "Errors: ${viewModel.totalErrors}",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(guideLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (viewModel.hasPreviousCharacter) {
-                            IconButton(onClick = { viewModel.previousCharacter() }) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = "Previous character")
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                if (viewModel.isCompleted) viewModel.practiceAgain()
-                                else viewModel.resetPractice()
-                            },
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (viewModel.isCompleted) "Again" else "Reset")
-                        }
-                        if (viewModel.isCompleted) {
-                            Spacer(Modifier.width(8.dp))
-                            if (viewModel.hasNextCharacter) {
-                                Button(
-                                    onClick = { viewModel.nextCharacter() },
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                                ) {
-                                    Text("Next")
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(Icons.Default.ArrowForward, contentDescription = null)
-                                }
-                            } else {
-                                // Stay on screen, no "Done" button that exits
-                                Button(
-                                    onClick = { viewModel.practiceAgain() },
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                                ) {
-                                    Text("Again")
-                                }
-                            }
-                        }
+            }
+        } else {
+            // Stroke count and errors
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Stroke: ${minOf(viewModel.currentStrokeIndex + 1, currentChar.medians.size)}/${currentChar.medians.size}",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        "Errors: ${viewModel.totalErrors}",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                
+                if (viewModel.isAllComplete) {
+                    Button(onClick = onBackClick) {
+                        Text("Finish!")
                     }
                 }
             }
