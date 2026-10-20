@@ -4,11 +4,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
@@ -21,10 +28,12 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(onPracticeClick: (String) -> Unit) {
+fun SearchScreen(onWordClick: (String) -> Unit) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
     
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
@@ -72,7 +81,7 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             items(searchResults) { char ->
                 HanziResultItem(
                     character = char,
-                    onPracticeClick = { onPracticeClick(char.character) },
+                    onWordClick = { onWordClick(char.character) },
                     onAddToListClick = {
                         characterToAdd = char.character
                         showAddToListDialog = true
@@ -89,8 +98,17 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
             onValueChange = { searchQuery = it },
             label = { Text(if (isSearching) "Searching..." else "Search Hanzi, Pinyin, or English") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.medium
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
+            shape = MaterialTheme.shapes.medium,
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                imeAction = ImeAction.Search
+            ),
+            keyboardActions = KeyboardActions(
+                onSearch = { focusManager.clearFocus() }
+            )
         )
     }
 
@@ -119,11 +137,11 @@ fun SearchScreen(onPracticeClick: (String) -> Unit) {
 @Composable
 fun HanziResultItem(
     character: HanziCharacter,
-    onPracticeClick: () -> Unit,
+    onWordClick: () -> Unit,
     onAddToListClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onPracticeClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onWordClick() },
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
@@ -160,7 +178,8 @@ fun HanziResultItem(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onAddToListClick) { Text("Add to List") }
                 Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = onPracticeClick) { Text("Practice") }
+                // Changed from "Practice" to "View Details" to match the new WordPage flow
+                Button(onClick = onWordClick) { Text("View Details") } 
             }
         }
     }
