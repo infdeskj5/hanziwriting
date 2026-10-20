@@ -18,6 +18,7 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class) // Required for FlowRow
 @Composable
 fun WordPage(
     word: String,
@@ -38,7 +39,6 @@ fun WordPage(
             charData = dao.getCharacterExact(word)
             graphicsData = dao.getGraphics(word)
             
-            // Extract components for the chips
             val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
             components = charData?.decomposition?.filter { it !in idsSymbols }?.map { it.toString() }?.distinct() ?: emptyList()
         }
@@ -63,7 +63,6 @@ fun WordPage(
 
         val data = charData!!
         
-        // Scrollable details section
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -90,25 +89,26 @@ fun WordPage(
                 }
             }
 
-            // Animation section for composing characters
             if (word.length > 1 || graphicsData != null) {
                 Spacer(modifier = Modifier.height(24.dp))
                 Text("Stroke Order", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Start))
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     items(word.toList().map { it.toString() }) { char ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(char, style = MaterialTheme.typography.titleMedium)
-                            // We need a mini view model just for the animation data
-                            val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
-                            LaunchedEffect(char) { miniVm.loadCharacter(char) }
                             
-                            if (miniVm.practiceData != null) {
+                            // Use a mini ViewModel just to fetch the medians for animation
+                            val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
+                            LaunchedEffect(char) { 
+                                miniVm.loadCharacters(char) // Updated method name
+                            }
+                            val charProgress = miniVm.characters.firstOrNull()
+                            
+                            if (charProgress != null && charProgress.medians.isNotEmpty()) {
                                 AnimationCanvas(
-                                    medians = miniVm.practiceData!!.medians,
+                                    medians = charProgress.medians,
                                     modifier = Modifier.size(100.dp),
                                     autoPlay = true,
                                     onComplete = {}
@@ -126,7 +126,6 @@ fun WordPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Practice button at the bottom
         Button(
             onClick = { onPracticeClick(word) },
             modifier = Modifier.fillMaxWidth().height(56.dp),
