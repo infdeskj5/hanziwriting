@@ -16,164 +16,127 @@ import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-data class CharacterPracticeData(
+enum class PracticePhase {
+    ANIMATION,          // Step 1: Watch animation
+    TRACE_WITH_TEMPLATE,// Step 2: Draw with template
+    STRUCTURE_QUIZ,     // Step 3: Select components/radicals
+    TRACE_BLIND_TEMPLATE,// Step 4: Draw with template, no char at top
+    MEMORY_DRAW         // Step 5: Draw from memory
+}
+
+data class CharacterProgress(
     val character: String,
-    val pinyin: String,
-    val definition: String,
-    val radical: String?,
-    val components: List<String>, // Extracted from decomposition
-    val totalStrokes: Int,
-    val medians: List<List<List<Double>>>,
-    val strokes: List<String>
+    var currentPhase: PracticePhase = PracticePhase.ANIMATION,
+    var isPhaseComplete: Boolean = false,
+    var selectedComponents: List<String> = emptyList(),
+    var charData: HanziCharacter? = null,
+    var medians: List<List<List<Double>>> = emptyList(),
+    var strokes: List<String> = emptyList()
 )
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
-    var practiceData by mutableStateOf<CharacterPracticeData?>(null)
+    val characters = mutableStateListOf<CharacterProgress>()
+    
+    var globalPhaseIndex by mutableIntStateOf(0)
         private set
-    var loadError by mutableStateOf<String?>(null)
+    var currentCharIndex by mutableIntStateOf(0)
         private set
-
-    var guideLevel by mutableIntStateOf(0)
+        
+    val phases = listOf(
+        PracticePhase.ANIMATION,
+        PracticePhase.TRACE_WITH_TEMPLATE,
+        PracticePhase.STRUCTURE_QUIZ,
+        PracticePhase.TRACE_BLIND_TEMPLATE,
+        PracticePhase.MEMORY_DRAW
+    )
+    
+    val currentPhase: PracticePhase get() = phases[globalPhaseIndex]
+    val currentChar: CharacterProgress? get() = characters.getOrNull(currentCharIndex)
+    
+    var isAllComplete by mutableStateOf(false)
         private set
-
-    private var characterQueue = listOf<String>()
-    var totalCharacters by mutableIntStateOf(0)
-        private set
-    var currentQueueIndex by mutableIntStateOf(0)
-        private set
-
-    val hasNextCharacter: Boolean get() = currentQueueIndex < totalCharacters - 1
-    val hasPreviousCharacter: Boolean get() = currentQueueIndex > 0
 
     var currentStrokeIndex by mutableIntStateOf(0)
         private set
-    var mistakesOnCurrentStroke by mutableIntStateOf(0)
-        private set
     var totalErrors by mutableIntStateOf(0)
         private set
-    var isCompleted by mutableStateOf(false)
-        private set
-
-    // Animation state
-    var animatedStrokeIndex by mutableIntStateOf(-1)
-        private set
-    var animationProgress by mutableStateOf(1f)
-        private set
-
+    
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
 
     private val gson = Gson()
 
     fun loadCharacters(input: String) {
-        characterQueue = input.map { it.toString() }
-        totalCharacters = characterQueue.size
-        currentQueueIndex = 0
-        if (characterQueue.isEmpty()) {
-            loadError = "No characters to practice"
-            return
+        characters.clear()
+        input.forEach { char ->
+            characters.add(CharacterProgress(character = char.toString()))
         }
-        loadCharacter(characterQueue[currentQueueIndex])
-    }
-
-    fun nextCharacter() {
-        if (hasNextCharacter) {
-            currentQueueIndex++
-            loadCharacter(characterQueue[currentQueueIndex])
-        }
-    }
-
-    fun previousCharacter() {
-        if (hasPreviousCharacter) {
-            currentQueueIndex--
-            loadCharacter(characterQueue[currentQueueIndex])
-        }
-    }
-
-    fun loadCharacter(character: String) {
-        loadError = null
-        practiceData = null
+        if (characters.isEmpty()) return
+        
         viewModelScope.launch {
-            try {
-                val charData = database.hanziDao().getCharacterExact(character)
-                val graphicsData = database.hanziDao().getGraphics(character)
+            characters.forEachIndexed { index, cp ->
+                val charData = database.hanziDao().getCharacterExact(cp.character)
+                val graphicsData = database.hanziDao().getGraphics(cp.character)
+                
                 if (charData != null && graphicsData != null) {
-                    parseGraphicsAndSetup(character, charData, graphicsData.rawJson)
-                    playAnimation() // Auto-play animation on load
-                } else {
-                    loadError = when {
-                        charData == null -> "No dictionary entry for '$character'"
-                        graphicsData == null -> "No stroke graphics for '$character'"
-                        else -> "Unknown error"
-                    }
-                    DebugLog.e("PracticeVM", loadError ?: "Unknown")
+                    val type = object : TypeToken<Map<String, Any>>() {}.type
+                    val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
+                    @Suppress("UNCHECKED_CAST")
+                    val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
+                    
+                    characters[index] = cp.copy(
+                        charData = charData,
+                        medians = medians,
+                        strokes = strokes
+                    )
                 }
-            } catch (e: Exception) {
-                loadError = "Exception: ${e.message}"
-                DebugLog.e("PracticeVM", "loadCharacter failed", e)
             }
         }
     }
 
-    private fun parseGraphicsAndSetup(character: String, charData: HanziCharacter, rawJson: String) {
-        try {
-            val type = object : TypeToken<Map<String, Any>>() {}.type
-            val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
-
-            @Suppress("UNCHECKED_CAST")
-            val medians = jsonMap["medians"] as? List<List<List<Double>>>
-            if (medians.isNullOrEmpty()) {
-                loadError = "No median stroke data for '$character'"
-                return
+    fun onPhaseComplete() {
+        if (currentChar == null) return
+        
+        // Mark current char's phase as complete
+        characters[currentCharIndex] = currentChar!!.copy(isPhaseComplete = true)
+        
+        // Move to next character in the SAME phase
+        if (currentCharIndex < characters.lastIndex) {
+            currentCharIndex++
+            resetStrokeState()
+        } else {
+            // All characters finished this phase, move to next phase
+            if (globalPhaseIndex < phases.lastIndex) {
+                globalPhaseIndex++
+                currentCharIndex = 0
+                // Reset phase complete flags for all chars
+                for (i in characters.indices) {
+                    characters[i] = characters[i].copy(isPhaseComplete = false)
+                }
+                resetStrokeState()
+            } else {
+                // All phases complete!
+                isAllComplete = true
+                ProgressStore.incrementSuccess(characters.first().character) // Increment for the word
             }
-            @Suppress("UNCHECKED_CAST")
-            val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
-
-            // Extract components from IDS decomposition string
-            val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
-            val components = charData.decomposition.filter { it !in idsSymbols }.map { it.toString() }.distinct()
-
-            val successCount = ProgressStore.getSuccessCount(character)
-            guideLevel = computeGuideLevel(successCount)
-
-            practiceData = CharacterPracticeData(
-                character = character,
-                pinyin = charData.pinyin,
-                definition = charData.definition,
-                radical = charData.radical,
-                components = components,
-                totalStrokes = medians.size,
-                medians = medians,
-                strokes = strokes
-            )
-            resetPractice()
-        } catch (e: Exception) {
-            loadError = "Parse failed: ${e.message}"
-            DebugLog.e("PracticeVM", "parseGraphicsAndSetup failed", e)
         }
     }
 
-    private fun computeGuideLevel(successCount: Int): Int = when {
-        successCount <= 0 -> 0   // Full guide
-        successCount == 1 -> 1   // Faded guide
-        successCount == 2 -> 2   // Hidden guide
-        else -> 3               // Memory mode (no guide, no character text)
-    }
-
-    fun playAnimation() {
-        viewModelScope.launch {
-            val data = practiceData ?: return@launch
-            for (i in 0 until data.totalStrokes) {
-                animatedStrokeIndex = i
-                animationProgress = 0f
-                delay(50) // Allow recomposition to catch up
-                animationProgress = 1f
-                delay(650) // Animation duration + pause
-            }
-            animatedStrokeIndex = -1
+    fun selectComponent(component: String) {
+        val cp = currentChar ?: return
+        val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
+        val correctComponents = cp.charData?.decomposition?.filter { it !in idsSymbols }?.map { it.toString() }?.distinct() ?: emptyList()
+        
+        val newSelected = cp.selectedComponents + component
+        characters[currentCharIndex] = cp.copy(selectedComponents = newSelected)
+        
+        if (newSelected.size == correctComponents.size) {
+            // Quiz complete for this character
+            onPhaseComplete()
         }
     }
 
@@ -182,11 +145,11 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     }
 
     fun finishStroke(canvasSize: Float) {
-        val data = practiceData ?: return
-        if (currentStrokeIndex >= data.medians.size) return
+        val cp = currentChar ?: return
+        if (currentStrokeIndex >= cp.medians.size) return
 
         val scale = canvasSize / HanziTransform.GRID_WIDTH
-        val expectedCanvasPoints = data.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
+        val expectedCanvasPoints = cp.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
 
         val isCorrect = StrokeEvaluator.evaluateStroke(
             userPoints = currentStrokePoints.toList(),
@@ -198,30 +161,18 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-            mistakesOnCurrentStroke = 0
-            if (currentStrokeIndex >= data.totalStrokes) {
-                isCompleted = true
-                ProgressStore.incrementSuccess(data.character)
+            if (currentStrokeIndex >= cp.medians.size) {
+                onPhaseComplete()
             }
         } else {
-            mistakesOnCurrentStroke++
             totalErrors++
             currentStrokePoints.clear()
         }
     }
 
-    fun practiceAgain() {
-        val data = practiceData ?: return
-        val successCount = ProgressStore.getSuccessCount(data.character)
-        guideLevel = computeGuideLevel(successCount)
-        resetPractice()
-    }
-
-    fun resetPractice() {
+    private fun resetStrokeState() {
         currentStrokeIndex = 0
         totalErrors = 0
-        mistakesOnCurrentStroke = 0
-        isCompleted = false
         currentStrokePoints.clear()
         completedStrokes.clear()
     }
