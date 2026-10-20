@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
 
+@OptIn(ExperimentalLayoutApi::class) // Required for FlowRow
 @Composable
 fun PracticeScreen(
     wordToPractice: String? = null,
@@ -68,7 +69,7 @@ fun PracticeScreen(
                         medians = currentChar.medians,
                         modifier = Modifier.size(100.dp),
                         autoPlay = true,
-                        onComplete = { viewModel.onPhaseComplete() } // Auto advance when animation finishes
+                        onComplete = { viewModel.onPhaseComplete() }
                     )
                 }
                 PracticePhase.TRACE_WITH_TEMPLATE -> {
@@ -115,7 +116,7 @@ fun PracticeScreen(
             HanziCanvas(
                 viewModel = viewModel,
                 showTemplate = showTemplate,
-                modifier = Modifier.size(300.dp) // Fixed size for drawing area
+                modifier = Modifier.size(300.dp)
             )
         }
 
@@ -123,7 +124,6 @@ fun PracticeScreen(
 
         // 4. BOTTOM CONTROLS
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            // Radical options
             val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
             val correctComponents = data.decomposition.filter { it !in idsSymbols }.map { it.toString() }.distinct()
             val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
@@ -147,7 +147,6 @@ fun PracticeScreen(
                 }
             }
         } else {
-            // Stroke count and errors
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
