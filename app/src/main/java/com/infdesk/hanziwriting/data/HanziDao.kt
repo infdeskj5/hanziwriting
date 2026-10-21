@@ -16,8 +16,8 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
-    @Query("UPDATE hanzi_characters SET radical = :radical, decomposition = :decomposition WHERE character = :character")
-    suspend fun updateRadicalAndDecomp(character: String, radical: String, decomposition: String)
+    @Query("UPDATE hanzi_characters SET radical = :radical, decomposition = :decomposition, matchesJson = :matchesJson WHERE character = :character")
+    suspend fun updateRadicalAndDecomp(character: String, radical: String, decomposition: String, matchesJson: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCharacters(characters: List<HanziCharacter>)
