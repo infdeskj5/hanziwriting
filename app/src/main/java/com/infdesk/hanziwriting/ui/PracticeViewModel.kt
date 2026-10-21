@@ -14,45 +14,48 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
+import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
 
-enum class PracticePhase {
-    ANIMATION,          // Step 1: Watch animation
-    TRACE_WITH_TEMPLATE,// Step 2: Draw with template
-    STRUCTURE_QUIZ,     // Step 3: Select components/radicals
-    TRACE_BLIND_TEMPLATE,// Step 4: Draw with template, no char at top
-    MEMORY_DRAW         // Step 5: Draw from memory
-}
+enum class PracticePhase { ANIMATION, TRACE_WITH_TEMPLATE, STRUCTURE_QUIZ, TRACE_BLIND_TEMPLATE, MEMORY_DRAW }
+
+data class ComponentInfo(val char: Char, val order: Int)
 
 data class CharacterProgress(
     val character: String,
-    var currentPhase: PracticePhase = PracticePhase.ANIMATION,
-    var isPhaseComplete: Boolean = false,
-    var selectedComponents: List<String> = emptyList(),
-    var charData: HanziCharacter? = null,
-    var medians: List<List<List<Double>>> = emptyList(),
-    var strokes: List<String> = emptyList()
-)
+    val charData: HanziCharacter? = null,
+    val medians: List<List<List<Double>>> = emptyList(),
+    val strokes: List<String> = emptyList(),
+    val orderedComponents: List<ComponentInfo> = emptyList()
+) {
+    fun getPhases(): List<PracticePhase> {
+        val list = mutableListOf(PracticePhase.ANIMATION, PracticePhase.TRACE_WITH_TEMPLATE)
+        if (orderedComponents.size > 1) list.add(PracticePhase.STRUCTURE_QUIZ)
+        list.add(PracticePhase.TRACE_BLIND_TEMPLATE)
+        list.add(PracticePhase.MEMORY_DRAW)
+        return list
+    }
+}
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     val characters = mutableStateListOf<CharacterProgress>()
     
-    var globalPhaseIndex by mutableIntStateOf(0)
-        private set
-    var currentCharIndex by mutableIntStateOf(0)
-        private set
-        
-    val phases = listOf(
+    val allPossiblePhases = listOf(
         PracticePhase.ANIMATION,
         PracticePhase.TRACE_WITH_TEMPLATE,
         PracticePhase.STRUCTURE_QUIZ,
         PracticePhase.TRACE_BLIND_TEMPLATE,
         PracticePhase.MEMORY_DRAW
     )
-    
-    val currentPhase: PracticePhase get() = phases[globalPhaseIndex]
+
+    var currentGlobalPhaseIndex by mutableIntStateOf(0)
+        private set
+    var currentCharIndex by mutableIntStateOf(0)
+        private set
+        
+    val currentGlobalPhase: PracticePhase get() = allPossiblePhases[currentGlobalPhaseIndex]
     val currentChar: CharacterProgress? get() = characters.getOrNull(currentCharIndex)
     
     var isAllComplete by mutableStateOf(false)
@@ -65,6 +68,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
+    val selectedComponents = mutableStateListOf<String>()
 
     private val gson = Gson()
 
@@ -88,61 +92,81 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     @Suppress("UNCHECKED_CAST")
                     val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
                     
+                    val idsNode = IdsParser.parse(charData.decomposition)
+                    val leaves = IdsParser.getLeaves(idsNode)
+                    val orderedComponents = mutableListOf<ComponentInfo>()
+                    
+                    if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
+                        try {
+                            val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
+                            val matches: List<List<Number>?> = gson.fromJson(charData.matchesJson, matchesType)
+                            val firstAppearance = mutableMapOf<Int, Int>()
+                            matches.forEachIndexed { strokeIndex, path ->
+                                if (path != null) {
+                                    val intPath = path.map { it.toInt() }
+                                    val leafIndex = IdsParser.resolvePath(idsNode, intPath)
+                                    if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
+                                        firstAppearance[leafIndex] = strokeIndex
+                                    }
+                                }
+                            }
+                            orderedComponents.addAll(
+                                leaves.mapIndexed { i, c -> ComponentInfo(c, firstAppearance[i] ?: Int.MAX_VALUE) }
+                                    .sortedBy { it.order }
+                            )
+                        } catch (e: Exception) {
+                            orderedComponents.addAll(leaves.map { ComponentInfo(it, 0) })
+                        }
+                    } else {
+                        orderedComponents.addAll(leaves.map { ComponentInfo(it, 0) })
+                    }
+
                     characters[index] = cp.copy(
                         charData = charData,
                         medians = medians,
-                        strokes = strokes
+                        strokes = strokes,
+                        orderedComponents = orderedComponents
                     )
                 }
+            }
+            while (currentCharIndex < characters.size && !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
+                currentCharIndex++
             }
         }
     }
 
     fun onPhaseComplete() {
-        if (currentChar == null) return
+        var nextIndex = currentCharIndex + 1
+        while (nextIndex < characters.size) {
+            if (characters[nextIndex].getPhases().contains(currentGlobalPhase)) break
+            nextIndex++
+        }
         
-        // Mark current char's phase as complete
-        characters[currentCharIndex] = currentChar!!.copy(isPhaseComplete = true)
-        
-        // Move to next character in the SAME phase
-        if (currentCharIndex < characters.lastIndex) {
-            currentCharIndex++
-            resetStrokeState()
+        if (nextIndex < characters.size) {
+            currentCharIndex = nextIndex
         } else {
-            // All characters finished this phase, move to next phase
-            if (globalPhaseIndex < phases.lastIndex) {
-                globalPhaseIndex++
+            if (currentGlobalPhaseIndex < allPossiblePhases.lastIndex) {
+                currentGlobalPhaseIndex++
                 currentCharIndex = 0
-                // Reset phase complete flags for all chars
-                for (i in characters.indices) {
-                    characters[i] = characters[i].copy(isPhaseComplete = false)
+                while (currentCharIndex < characters.size && !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
+                    currentCharIndex++
                 }
-                resetStrokeState()
+                if (currentCharIndex >= characters.size) onPhaseComplete()
             } else {
-                // All phases complete!
                 isAllComplete = true
-                ProgressStore.incrementSuccess(characters.first().character) // Increment for the word
+                ProgressStore.incrementSuccess(characters.first().character)
             }
         }
+        resetStrokeState()
     }
 
     fun selectComponent(component: String) {
+        selectedComponents.add(component)
         val cp = currentChar ?: return
-        val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
-        val correctComponents = cp.charData?.decomposition?.filter { it !in idsSymbols }?.map { it.toString() }?.distinct() ?: emptyList()
-        
-        val newSelected = cp.selectedComponents + component
-        characters[currentCharIndex] = cp.copy(selectedComponents = newSelected)
-        
-        if (newSelected.size == correctComponents.size) {
-            // Quiz complete for this character
-            onPhaseComplete()
-        }
+        if (selectedComponents.size == cp.orderedComponents.size) onPhaseComplete()
     }
 
-    fun addPointToCurrentStroke(point: Offset) {
-        currentStrokePoints.add(point)
-    }
+    fun addPointToCurrentStroke(point: Offset) { currentStrokePoints.add(point) }
 
     fun finishStroke(canvasSize: Float) {
         val cp = currentChar ?: return
@@ -161,9 +185,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-            if (currentStrokeIndex >= cp.medians.size) {
-                onPhaseComplete()
-            }
+            if (currentStrokeIndex >= cp.medians.size) onPhaseComplete()
         } else {
             totalErrors++
             currentStrokePoints.clear()
@@ -175,5 +197,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         totalErrors = 0
         currentStrokePoints.clear()
         completedStrokes.clear()
+        selectedComponents.clear()
     }
 }
