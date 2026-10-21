@@ -9,12 +9,14 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.AppState
 
 enum class Screen(val title: String, val icon: ImageVector) {
@@ -34,37 +36,14 @@ fun MainScreen() {
 
 @Composable
 fun LoadingScreen() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Hanzi Writing", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(32.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(10.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(AppState.initProgress.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-            )
+        Box(modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+            Box(modifier = Modifier.fillMaxWidth(AppState.initProgress.coerceIn(0f, 1f)).fillMaxHeight().clip(RoundedCornerShape(5.dp)).background(MaterialTheme.colorScheme.primary))
         }
         Spacer(modifier = Modifier.height(16.dp))
         Text(AppState.initMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "First launch takes a moment while the dictionary and stroke data are prepared.",
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
@@ -74,6 +53,10 @@ fun HanziWritingApp() {
     var wordToView by remember { mutableStateOf<String?>(null) }
     var practiceCharacter by remember { mutableStateOf<String?>(null) }
     var practiceListId by remember { mutableStateOf<Int?>(null) }
+
+    // Lifted Search State
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
 
     val displayState = when {
         practiceListId != null -> "ListPractice"
@@ -105,7 +88,13 @@ fun HanziWritingApp() {
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
             when (displayState) {
-                "Search" -> SearchScreen(onWordClick = { word -> wordToView = word })
+                "Search" -> SearchScreen(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    searchResults = searchResults,
+                    onResultsChange = { searchResults = it },
+                    onWordClick = { word -> wordToView = word }
+                )
                 "WordPage" -> WordPage(
                     word = wordToView!!,
                     onBackClick = { wordToView = null },
