@@ -1,14 +1,13 @@
 package com.infdesk.hanziwriting.ui
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -26,38 +25,26 @@ fun AnimationCanvas(
     onComplete: () -> Unit = {}
 ) {
     val density = LocalDensity.current
-    val canvasSizePx = with(density) { 100.dp.toPx() } // Default size, scales to modifier
-    val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-
+    val canvasSizePx = with(density) { 100.dp.toPx() }
+    
+    // Animatable provides smooth, frame-by-frame updates without heavy recompositions
+    val strokeProgress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
-    var strokeProgress by remember { mutableFloatStateOf(0f) }
+    var animationKey by remember { mutableIntStateOf(0) }
 
-    val animatedProgress by animateFloatAsState(
-        targetValue = strokeProgress,
-        animationSpec = tween(durationMillis = 400, easing = androidx.compose.animation.core.LinearEasing),
-        finishedListener = {
-            if (currentStroke < medians.lastIndex) {
-                currentStroke++
-                strokeProgress = 0f
-            } else {
-                onComplete()
-            }
-        }
-    )
-
-    LaunchedEffect(autoPlay) {
+    LaunchedEffect(medians, autoPlay, animationKey) {
         if (autoPlay && medians.isNotEmpty()) {
-            strokeProgress = 0f
-            delay(100)
-            strokeProgress = 1f
-        }
-    }
-
-    LaunchedEffect(currentStroke) {
-        if (currentStroke < medians.size && currentStroke > 0) {
-            strokeProgress = 0f
-            delay(150) // Pause between strokes
-            strokeProgress = 1f
+            currentStroke = 0
+            for (i in medians.indices) {
+                currentStroke = i
+                strokeProgress.snapTo(0f)
+                strokeProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 400, easing = LinearEasing)
+                )
+                delay(150)
+            }
+            onComplete()
         }
     }
 
@@ -67,14 +54,15 @@ fun AnimationCanvas(
     Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
         val actualScale = size.width / HanziTransform.GRID_WIDTH
         
-        // Draw completed strokes
         for (i in 0 until currentStroke) {
-            drawMedianPath(medians[i], actualScale, 1f, strokeColor, strokeWidth)
+            if (i < medians.size) {
+                drawMedianPath(medians[i], actualScale, 1f, strokeColor, strokeWidth)
+            }
         }
         
-        // Draw current stroke partially
+        // FIX: Ensure we don't access out of bounds
         if (currentStroke < medians.size) {
-            drawMedianPath(medians[currentStroke], actualScale, animatedProgress, strokeColor, strokeWidth)
+            drawMedianPath(medians[currentStroke], actualScale, strokeProgress.value, strokeColor, strokeWidth)
         }
     }
 }
