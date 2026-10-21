@@ -9,21 +9,22 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
+import com.infdesk.hanziwriting.ui.ComponentInfo
 
 @Composable
 fun StructureCanvas(
-    leafCount: Int,
+    orderedComponents: List<ComponentInfo>,
     activeIndex: Int,
     modifier: Modifier = Modifier
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
     val outlineColor = MaterialTheme.colorScheme.outline
+    val boxCount = orderedComponents.size.coerceAtLeast(1)
 
     Canvas(modifier = modifier.background(surfaceColor)) {
         val padding = size.width * 0.1f
         val spacing = size.width * 0.05f
-        val boxCount = leafCount.coerceAtLeast(1)
         val boxWidth = (size.width - padding * 2 - spacing * (boxCount - 1)) / boxCount
         val boxHeight = size.height - padding * 2
 
