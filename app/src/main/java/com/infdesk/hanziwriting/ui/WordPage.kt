@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -18,7 +19,7 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalLayoutApi::class) // Required for FlowRow
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WordPage(
     word: String,
@@ -26,6 +27,8 @@ fun WordPage(
     onComponentClick: (String) -> Unit,
     onPracticeClick: (String) -> Unit
 ) {
+    BackHandler(enabled = true) { onBackClick() }
+
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
@@ -46,27 +49,20 @@ fun WordPage(
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBackClick) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-            }
+            IconButton(onClick = onBackClick) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
             Text("Word Details", style = MaterialTheme.typography.titleLarge)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         if (charData == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return
         }
 
         val data = charData!!
         
-        Column(
-            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
             Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(8.dp))
@@ -76,15 +72,9 @@ fun WordPage(
                 Spacer(modifier = Modifier.height(24.dp))
                 Text("Components", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Start))
                 Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     components.forEach { comp ->
-                        AssistChip(
-                            onClick = { onComponentClick(comp) },
-                            label = { Text(comp, style = MaterialTheme.typography.titleLarge) }
-                        )
+                        AssistChip(onClick = { onComponentClick(comp) }, label = { Text(comp, style = MaterialTheme.typography.titleLarge) })
                     }
                 }
             }
@@ -98,25 +88,14 @@ fun WordPage(
                     items(word.toList().map { it.toString() }) { char ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(char, style = MaterialTheme.typography.titleMedium)
-                            
-                            // Use a mini ViewModel just to fetch the medians for animation
                             val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
-                            LaunchedEffect(char) { 
-                                miniVm.loadCharacters(char) // Updated method name
-                            }
+                            LaunchedEffect(char) { miniVm.loadCharacters(char) }
                             val charProgress = miniVm.characters.firstOrNull()
                             
                             if (charProgress != null && charProgress.medians.isNotEmpty()) {
-                                AnimationCanvas(
-                                    medians = charProgress.medians,
-                                    modifier = Modifier.size(100.dp),
-                                    autoPlay = true,
-                                    onComplete = {}
-                                )
+                                AnimationCanvas(medians = charProgress.medians, modifier = Modifier.size(100.dp), autoPlay = true, onComplete = {})
                             } else {
-                                Box(modifier = Modifier.size(100.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                }
+                                Box(modifier = Modifier.size(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(24.dp)) }
                             }
                         }
                     }
@@ -126,11 +105,7 @@ fun WordPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
-            onClick = { onPracticeClick(word) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
+        Button(onClick = { onPracticeClick(word) }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = MaterialTheme.shapes.medium) {
             Text("Practice", style = MaterialTheme.typography.titleMedium)
         }
     }
