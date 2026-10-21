@@ -2,13 +2,13 @@ package com.infdesk.hanziwriting.utils
 
 sealed class IdsNode {
     data class Leaf(val char: Char, val index: Int) : IdsNode()
-    data class Branch(val children: List<IdsNode>) : IdsNode()
+    data class Branch(val operator: Char, val children: List<IdsNode>) : IdsNode()
 }
 
 object IdsParser {
-    private val IDS_SYMBOLS = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻')
-    
-    private fun getArity(c: Char): Int = when(c) {
+    private val IDS_SYMBOLS = setOf('⿰','⿱','⿲','⿳','⿴','⿵','⿶','⿷','⿸','⿹','⿺','⿻')
+
+    private fun getArity(c: Char): Int = when (c) {
         '⿲', '⿳' -> 3
         in IDS_SYMBOLS -> 2
         else -> 0
@@ -24,7 +24,7 @@ object IdsParser {
             val arity = getArity(c)
             return if (arity > 0) {
                 val children = (0 until arity).map { build() }
-                IdsNode.Branch(children)
+                IdsNode.Branch(c, children)
             } else {
                 if (c == '？' || c == ' ') IdsNode.Leaf(c, -1)
                 else IdsNode.Leaf(c, leafCount++)
@@ -33,11 +33,11 @@ object IdsParser {
         return build()
     }
 
-    fun getLeaves(node: IdsNode?): List<Char> {
-        val leaves = mutableListOf<Char>()
+    fun getLeavesWithIndex(node: IdsNode?): List<IdsNode.Leaf> {
+        val leaves = mutableListOf<IdsNode.Leaf>()
         fun traverse(n: IdsNode) {
             when (n) {
-                is IdsNode.Leaf -> if (n.char != '？' && n.char != ' ') leaves.add(n.char)
+                is IdsNode.Leaf -> if (n.index >= 0 && n.char != '？' && n.char != ' ') leaves.add(n)
                 is IdsNode.Branch -> n.children.forEach { traverse(it) }
             }
         }
@@ -49,11 +49,8 @@ object IdsParser {
         if (node == null) return -1
         var current = node
         for (i in path) {
-            if (current is IdsNode.Branch && i < current.children.size) {
-                current = current.children[i]
-            } else {
-                return -1
-            }
+            if (current is IdsNode.Branch && i < current.children.size) current = current.children[i]
+            else return -1
         }
         return if (current is IdsNode.Leaf) current.index else -1
     }
