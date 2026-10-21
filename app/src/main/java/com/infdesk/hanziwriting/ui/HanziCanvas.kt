@@ -37,7 +37,7 @@ fun HanziCanvas(
         val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
         val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.08f)
         val userColor = MaterialTheme.colorScheme.primary
-        val guideAlpha = 0.25f // Fixed alpha for template
+        val guideAlpha = 0.25f 
         val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = guideAlpha)
 
         val svgPaths: List<Path> = remember(currentChar.strokes, canvasSizePx) {
@@ -72,20 +72,15 @@ fun HanziCanvas(
                     )
                 }
         ) {
-            // 1. Practice grid
             drawLine(gridColor, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), strokeWidth = 2f)
             drawLine(gridColor, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 2f)
             drawLine(gridColor, Offset(0f, 0f), Offset(size.width, size.height), strokeWidth = 1.5f)
             drawLine(gridColor, Offset(size.width, 0f), Offset(0f, size.height), strokeWidth = 1.5f)
 
-            // 2. Guide strokes (SVG paths) - ONLY IF showTemplate is true
             if (showTemplate && svgPaths.size == currentChar.strokes.size) {
-                svgPaths.forEach { path ->
-                    drawPath(path, guideColor, style = Fill)
-                }
+                svgPaths.forEach { path -> drawPath(path, guideColor, style = Fill) }
             }
 
-            // 3. Completed user strokes
             val userStrokeWidth = size.width * 0.055f
             viewModel.completedStrokes.forEach { points ->
                 val path = Path()
@@ -95,7 +90,6 @@ fun HanziCanvas(
                 drawPath(path, userColor.copy(alpha = 0.75f), style = Stroke(width = userStrokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
 
-            // 4. Current active stroke
             if (viewModel.currentStrokePoints.isNotEmpty()) {
                 val path = Path()
                 viewModel.currentStrokePoints.forEachIndexed { i, off ->
