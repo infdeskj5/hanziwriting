@@ -14,6 +14,7 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
+import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
@@ -21,14 +22,16 @@ import kotlinx.coroutines.launch
 
 enum class PracticePhase { ANIMATION, TRACE_WITH_TEMPLATE, STRUCTURE_QUIZ, TRACE_BLIND_TEMPLATE, MEMORY_DRAW }
 
-data class ComponentInfo(val char: Char, val order: Int)
+data class ComponentInfo(val char: Char, val leafIndex: Int, val order: Int)
 
 data class CharacterProgress(
     val character: String,
     val charData: HanziCharacter? = null,
     val medians: List<List<List<Double>>> = emptyList(),
     val strokes: List<String> = emptyList(),
-    val orderedComponents: List<ComponentInfo> = emptyList()
+    val orderedComponents: List<ComponentInfo> = emptyList(),
+    val idsRoot: IdsNode? = null,
+    val leafRank: Map<Int, Int> = emptyMap()
 ) {
     fun getPhases(): List<PracticePhase> {
         val list = mutableListOf(PracticePhase.ANIMATION, PracticePhase.TRACE_WITH_TEMPLATE)
@@ -41,7 +44,7 @@ data class CharacterProgress(
 
 class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     val characters = mutableStateListOf<CharacterProgress>()
-    
+
     val allPossiblePhases = listOf(
         PracticePhase.ANIMATION,
         PracticePhase.TRACE_WITH_TEMPLATE,
@@ -54,10 +57,10 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         private set
     var currentCharIndex by mutableIntStateOf(0)
         private set
-        
+
     val currentGlobalPhase: PracticePhase get() = allPossiblePhases[currentGlobalPhaseIndex]
     val currentChar: CharacterProgress? get() = characters.getOrNull(currentCharIndex)
-    
+
     var isAllComplete by mutableStateOf(false)
         private set
 
@@ -65,7 +68,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         private set
     var totalErrors by mutableIntStateOf(0)
         private set
-    
+
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
@@ -74,16 +77,14 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     fun loadCharacters(input: String) {
         characters.clear()
-        input.forEach { char ->
-            characters.add(CharacterProgress(character = char.toString()))
-        }
+        input.forEach { char -> characters.add(CharacterProgress(character = char.toString())) }
         if (characters.isEmpty()) return
-        
+
         viewModelScope.launch {
             characters.forEachIndexed { index, cp ->
                 val charData = database.hanziDao().getCharacterExact(cp.character)
                 val graphicsData = database.hanziDao().getGraphics(cp.character)
-                
+
                 if (charData != null && graphicsData != null) {
                     val type = object : TypeToken<Map<String, Any>>() {}.type
                     val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
@@ -91,45 +92,50 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
                     @Suppress("UNCHECKED_CAST")
                     val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
-                    
-                    val idsNode = IdsParser.parse(charData.decomposition)
-                    val leaves = IdsParser.getLeaves(idsNode)
+
+                    // Parse IDS tree + writing order from matches
+                    val idsRoot = IdsParser.parse(charData.decomposition)
+                    val leaves = IdsParser.getLeavesWithIndex(idsRoot)
                     val orderedComponents = mutableListOf<ComponentInfo>()
-                    
+                    val leafRank = mutableMapOf<Int, Int>()
+
+                    val firstAppearance = mutableMapOf<Int, Int>()
                     if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
                         try {
                             val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
                             val matches: List<List<Number>?> = gson.fromJson(charData.matchesJson, matchesType)
-                            val firstAppearance = mutableMapOf<Int, Int>()
                             matches.forEachIndexed { strokeIndex, path ->
                                 if (path != null) {
                                     val intPath = path.map { it.toInt() }
-                                    val leafIndex = IdsParser.resolvePath(idsNode, intPath)
+                                    val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
                                     if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
                                         firstAppearance[leafIndex] = strokeIndex
                                     }
                                 }
                             }
-                            orderedComponents.addAll(
-                                leaves.mapIndexed { i, c -> ComponentInfo(c, firstAppearance[i] ?: Int.MAX_VALUE) }
-                                    .sortedBy { it.order }
-                            )
                         } catch (e: Exception) {
-                            orderedComponents.addAll(leaves.map { ComponentInfo(it, 0) })
+                            DebugLog.e("PracticeVM", "matches parse failed", e)
                         }
-                    } else {
-                        orderedComponents.addAll(leaves.map { ComponentInfo(it, 0) })
+                    }
+
+                    val sortedLeaves = leaves.sortedBy { firstAppearance[it.index] ?: Int.MAX_VALUE }
+                    sortedLeaves.forEachIndexed { rank, leaf ->
+                        orderedComponents.add(ComponentInfo(leaf.char, leaf.index, rank))
+                        leafRank[leaf.index] = rank
                     }
 
                     characters[index] = cp.copy(
                         charData = charData,
                         medians = medians,
                         strokes = strokes,
-                        orderedComponents = orderedComponents
+                        orderedComponents = orderedComponents,
+                        idsRoot = idsRoot,
+                        leafRank = leafRank
                     )
                 }
             }
-            while (currentCharIndex < characters.size && !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
+            while (currentCharIndex < characters.size &&
+                !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
                 currentCharIndex++
             }
         }
@@ -141,14 +147,15 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
             if (characters[nextIndex].getPhases().contains(currentGlobalPhase)) break
             nextIndex++
         }
-        
+
         if (nextIndex < characters.size) {
             currentCharIndex = nextIndex
         } else {
             if (currentGlobalPhaseIndex < allPossiblePhases.lastIndex) {
                 currentGlobalPhaseIndex++
                 currentCharIndex = 0
-                while (currentCharIndex < characters.size && !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
+                while (currentCharIndex < characters.size &&
+                    !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
                     currentCharIndex++
                 }
                 if (currentCharIndex >= characters.size) onPhaseComplete()
@@ -160,10 +167,18 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         resetStrokeState()
     }
 
+    // Validates that the user picks the correct NEXT component in writing order
     fun selectComponent(component: String) {
-        selectedComponents.add(component)
         val cp = currentChar ?: return
-        if (selectedComponents.size == cp.orderedComponents.size) onPhaseComplete()
+        val expectedIndex = selectedComponents.size
+        if (expectedIndex >= cp.orderedComponents.size) return
+        val expectedChar = cp.orderedComponents[expectedIndex].char.toString()
+        if (component == expectedChar) {
+            selectedComponents.add(component)
+            if (selectedComponents.size == cp.orderedComponents.size) onPhaseComplete()
+        } else {
+            totalErrors++
+        }
     }
 
     fun addPointToCurrentStroke(point: Offset) { currentStrokePoints.add(point) }
