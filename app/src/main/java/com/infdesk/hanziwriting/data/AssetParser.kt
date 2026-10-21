@@ -26,7 +26,8 @@ object AssetParser {
                                 pinyin = pinyin,
                                 definition = definition.replace("/", ", "),
                                 radical = "",
-                                decomposition = "" // Will be updated by radicals parser
+                                decomposition = "",
+                                matchesJson = ""
                             )
                         )
                     }
@@ -72,7 +73,8 @@ object AssetParser {
                         val character = json.get("character")?.asString ?: return@forEach
                         val radical = json.get("radical")?.asString ?: ""
                         val decomposition = json.get("decomposition")?.asString ?: ""
-                        dao.updateRadicalAndDecomp(character, radical, decomposition)
+                        val matches = json.get("matches")?.toString() ?: ""
+                        dao.updateRadicalAndDecomp(character, radical, decomposition, matches)
                         count++
                     } catch (_: Exception) { }
                 }
