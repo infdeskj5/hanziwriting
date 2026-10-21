@@ -7,12 +7,11 @@ object StrokeEvaluator {
     fun evaluateStroke(userPoints: List<Offset>, expectedPoints: List<Offset>, canvasSize: Float): Boolean {
         if (userPoints.size < 3 || expectedPoints.size < 2) return false
         
-        val leniency = canvasSize * 0.25f // Very forgiving: 25% of canvas size
+        val leniency = canvasSize * 0.25f 
         
         val startMatch = userPoints.first().distanceTo(expectedPoints.first()) < leniency
         val endMatch = userPoints.last().distanceTo(expectedPoints.last()) < leniency
         
-        // Allow drawing backwards
         val startMatchBackwards = userPoints.first().distanceTo(expectedPoints.last()) < leniency
         val endMatchBackwards = userPoints.last().distanceTo(expectedPoints.first()) < leniency
         
@@ -20,7 +19,6 @@ object StrokeEvaluator {
             return false
         }
         
-        // Check overall path deviation
         var totalDist = 0f
         val sampleRate = maxOf(1, userPoints.size / 15)
         var sampledCount = 0
