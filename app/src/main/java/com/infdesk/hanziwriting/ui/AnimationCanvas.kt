@@ -27,12 +27,10 @@ fun AnimationCanvas(
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
     
-    // Animatable provides smooth, frame-by-frame updates without heavy recompositions
     val strokeProgress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
-    var animationKey by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(medians, autoPlay, animationKey) {
+    LaunchedEffect(medians, autoPlay) {
         if (autoPlay && medians.isNotEmpty()) {
             currentStroke = 0
             for (i in medians.indices) {
@@ -55,12 +53,8 @@ fun AnimationCanvas(
         val actualScale = size.width / HanziTransform.GRID_WIDTH
         
         for (i in 0 until currentStroke) {
-            if (i < medians.size) {
-                drawMedianPath(medians[i], actualScale, 1f, strokeColor, strokeWidth)
-            }
+            if (i < medians.size) drawMedianPath(medians[i], actualScale, 1f, strokeColor, strokeWidth)
         }
-        
-        // FIX: Ensure we don't access out of bounds
         if (currentStroke < medians.size) {
             drawMedianPath(medians[currentStroke], actualScale, strokeProgress.value, strokeColor, strokeWidth)
         }
@@ -68,21 +62,14 @@ fun AnimationCanvas(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMedianPath(
-    points: List<List<Double>>,
-    scale: Float,
-    progress: Float,
-    color: androidx.compose.ui.graphics.Color,
-    width: Float
+    points: List<List<Double>>, scale: Float, progress: Float, color: androidx.compose.ui.graphics.Color, width: Float
 ) {
     if (points.isEmpty()) return
     val path = Path()
-    val totalPoints = points.size
-    val pointsToDraw = (totalPoints * progress).toInt().coerceAtLeast(1)
-    
+    val pointsToDraw = (points.size * progress).toInt().coerceAtLeast(1)
     points.take(pointsToDraw).forEachIndexed { i, pt ->
         val cp = HanziTransform.toCanvas(pt, scale)
         if (i == 0) path.moveTo(cp.x, cp.y) else path.lineTo(cp.x, cp.y)
     }
-    
     drawPath(path, color, style = Stroke(width = width, cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
