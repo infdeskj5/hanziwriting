@@ -9,7 +9,8 @@ data class HanziCharacter(
     val pinyin: String,
     val definition: String,
     val radical: String = "",
-    val decomposition: String = "" // Stores IDS sequence like "⿰亻⿱夂彡"
+    val decomposition: String = "",
+    val matchesJson: String = "" // Stores the JSON array of paths
 )
 
 @Entity(tableName = "hanzi_graphics")
