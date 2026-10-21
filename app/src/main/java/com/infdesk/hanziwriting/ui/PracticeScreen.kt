@@ -53,16 +53,24 @@ fun PracticeScreen(
 
         val data = currentChar.charData!!
 
+        // TOP BLOCK
         Box(modifier = Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when (phase) {
                 PracticePhase.ANIMATION -> {
-                    AnimationCanvas(medians = currentChar.medians, modifier = Modifier.size(100.dp), autoPlay = true, onComplete = { viewModel.onPhaseComplete() })
+                    // Looping animation plays WHILE you practice
+                    AnimationCanvas(
+                        medians = currentChar.medians,
+                        modifier = Modifier.size(100.dp),
+                        autoPlay = true,
+                        loop = true,
+                        onComplete = {}
+                    )
                 }
                 PracticePhase.TRACE_WITH_TEMPLATE -> {
                     Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
                 }
                 PracticePhase.STRUCTURE_QUIZ -> {
-                    StructureCanvas(orderedComponents = currentChar.orderedComponents, activeIndex = viewModel.selectedComponents.size, modifier = Modifier.size(100.dp))
+                    Text("Select components in writing order", style = MaterialTheme.typography.titleMedium)
                 }
                 PracticePhase.TRACE_BLIND_TEMPLATE -> {
                     Text("Draw with template", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -75,6 +83,7 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        // DEFINITION (scrollable, capped height)
         Box(modifier = Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
@@ -84,20 +93,33 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        val showTemplate = phase == PracticePhase.TRACE_WITH_TEMPLATE || phase == PracticePhase.TRACE_BLIND_TEMPLATE
-        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            HanziCanvas(viewModel = viewModel, showTemplate = showTemplate, modifier = Modifier.size(300.dp))
+        // MIDDLE AREA: structure view (quiz) OR drawing canvas
+        if (phase == PracticePhase.STRUCTURE_QUIZ) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                StructureView(
+                    root = currentChar.idsRoot,
+                    leafRank = currentChar.leafRank,
+                    selectedCount = viewModel.selectedComponents.size,
+                    modifier = Modifier.size(220.dp)
+                )
+            }
+        } else {
+            val showTemplate = phase == PracticePhase.ANIMATION ||
+                               phase == PracticePhase.TRACE_WITH_TEMPLATE ||
+                               phase == PracticePhase.TRACE_BLIND_TEMPLATE
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                HanziCanvas(viewModel = viewModel, showTemplate = showTemplate, modifier = Modifier.size(300.dp))
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // BOTTOM CONTROLS
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             val correctComponents = currentChar.orderedComponents.map { it.char.toString() }
             val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
             val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
-            
-            Text("Select components in stroke order:", style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(8.dp))
+
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 options.forEach { comp ->
                     Button(
