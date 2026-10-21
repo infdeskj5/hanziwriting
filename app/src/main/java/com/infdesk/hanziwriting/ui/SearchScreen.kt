@@ -26,18 +26,20 @@ import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SearchScreen(onWordClick: (String) -> Unit) {
+fun SearchScreen(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    searchResults: List<HanziCharacter>,
+    onResultsChange: (List<HanziCharacter>) -> Unit,
+    onWordClick: (String) -> Unit
+) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
-    
-    var searchQuery by remember { mutableStateOf("") }
-    var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
     
     var showAddToListDialog by remember { mutableStateOf(false) }
     var characterToAdd by remember { mutableStateOf("") }
@@ -47,11 +49,9 @@ fun SearchScreen(onWordClick: (String) -> Unit) {
         if (showAddToListDialog) availableLists = dao.getAllLists()
     }
 
-    // AUTOMATIC DEBOUNCED SEARCH
     LaunchedEffect(searchQuery) {
         if (searchQuery.isNotBlank()) {
-            delay(300) // Wait 300ms after user stops typing
-            isSearching = true
+            delay(300)
             val exactMatches = dao.searchHanziExact(searchQuery)
             val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
                 val chars = searchQuery.toCharArray().distinct().map { it.toString() }
@@ -59,25 +59,17 @@ fun SearchScreen(onWordClick: (String) -> Unit) {
             } else {
                 emptyList()
             }
-            searchResults = (exactMatches + composingMatches)
+            val results = (exactMatches + composingMatches)
                 .distinctBy { it.character }
                 .sortedBy { it.character != searchQuery }
-            isSearching = false
+            onResultsChange(results)
         } else {
-            searchResults = emptyList()
+            onResultsChange(emptyList())
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Results take up all available space, pushing the search bar to the bottom
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(searchResults) { char ->
                 HanziResultItem(
                     character = char,
@@ -92,44 +84,39 @@ fun SearchScreen(onWordClick: (String) -> Unit) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Search bar pinned to the bottom (above the navigation bar)
         OutlinedTextField(
             value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text(if (isSearching) "Searching..." else "Search Hanzi, Pinyin, or English") },
+            onValueChange = onSearchQueryChange,
+            label = { Text("Search Hanzi, Pinyin, or English") },
             singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester),
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             shape = MaterialTheme.shapes.medium,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = { focusManager.clearFocus() }
-            )
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
         )
     }
 
     if (showAddToListDialog) {
-        AddToListDialog(
-            character = characterToAdd,
-            lists = availableLists,
-            onDismiss = { showAddToListDialog = false },
-            onAddToExisting = { listId ->
-                coroutineScope.launch {
-                    dao.addCharacterToList(ListItem(listId = listId, character = characterToAdd))
-                    showAddToListDialog = false
+        AlertDialog(
+            onDismissRequest = { showAddToListDialog = false },
+            title = { Text("Add '$characterToAdd' to List") },
+            text = {
+                Column {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(availableLists) { list ->
+                            TextButton(onClick = { 
+                                coroutineScope.launch {
+                                    dao.addCharacterToList(ListItem(listId = list.listId, character = characterToAdd))
+                                    showAddToListDialog = false
+                                }
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Text(list.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+                            }
+                        }
+                    }
                 }
             },
-            onCreateNew = { newName ->
-                coroutineScope.launch {
-                    val newListId = dao.insertList(PracticeList(name = newName))
-                    dao.addCharacterToList(ListItem(listId = newListId.toInt(), character = characterToAdd))
-                    showAddToListDialog = false
-                }
-            }
+            confirmButton = { TextButton(onClick = { showAddToListDialog = false }) { Text("Cancel") } }
         )
     }
 }
@@ -147,30 +134,12 @@ fun HanziResultItem(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = character.character,
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(end = 16.dp)
-                )
+                Text(text = character.character, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = PinyinUtils.convertToToneMarks(character.pinyin), 
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = character.definition,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2
-                    )
+                    Text(text = PinyinUtils.convertToToneMarks(character.pinyin), style = MaterialTheme.typography.titleMedium)
+                    Text(text = character.definition, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                     if (character.radical.isNotBlank()) {
-                        Text(
-                            text = "Radical: ${character.radical}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
+                        Text(text = "Radical: ${character.radical}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
@@ -178,60 +147,8 @@ fun HanziResultItem(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onAddToListClick) { Text("Add to List") }
                 Spacer(modifier = Modifier.width(8.dp))
-                // Changed from "Practice" to "View Details" to match the new WordPage flow
                 Button(onClick = onWordClick) { Text("View Details") } 
             }
         }
     }
-}
-
-@Composable
-fun AddToListDialog(
-    character: String,
-    lists: List<PracticeList>,
-    onDismiss: () -> Unit,
-    onAddToExisting: (Int) -> Unit,
-    onCreateNew: (String) -> Unit
-) {
-    var newListName by remember { mutableStateOf("") }
-    var showNewListInput by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add '$character' to List") },
-        text = {
-            Column {
-                if (showNewListInput) {
-                    OutlinedTextField(
-                        value = newListName,
-                        onValueChange = { newListName = it },
-                        label = { Text("New List Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.small
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { if (newListName.isNotBlank()) onCreateNew(newListName) }) {
-                            Text("Create & Add")
-                        }
-                    }
-                } else {
-                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                        items(lists) { list ->
-                            TextButton(onClick = { onAddToExisting(list.listId) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(list.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
-                            }
-                        }
-                        item {
-                            TextButton(onClick = { showNewListInput = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("+ Create New List", color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
 }
