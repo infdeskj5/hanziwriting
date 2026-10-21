@@ -9,8 +9,7 @@ import kotlinx.coroutines.withContext
 object DatabaseInitializer {
     private const val PREFS_NAME = "hanzi_init"
     private const val KEY_INIT_VERSION = "init_version"
-    // Bumped to 2 to force re-parsing with the new decomposition field
-    private const val CURRENT_INIT_VERSION = 2 
+    private const val CURRENT_INIT_VERSION = 3 
 
     suspend fun initializeIfNeeded(context: Context, database: AppDatabase) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
