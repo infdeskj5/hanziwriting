@@ -12,7 +12,6 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
-import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
 import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsTreeBuilder
@@ -64,6 +63,8 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
+    // FIX #3: track used option buttons by unique ID (handles duplicate radicals)
+    val usedOptionIds = mutableStateListOf<Int>()
 
     private val gson = Gson()
 
@@ -84,7 +85,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     @Suppress("UNCHECKED_CAST")
                     val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
 
-                    // RECURSIVE decomposition build + writing order
                     val buildResult = IdsTreeBuilder(database.hanziDao()).build(cp.character, medians.size)
                     val orderedComponents = buildResult.atomicLeaves
                         .map { ComponentInfo(it.char, it.index, buildResult.leafRank[it.index] ?: Int.MAX_VALUE) }
@@ -102,7 +102,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         }
     }
 
-    // Called when a phase's task is finished -> pause until user taps Next
     fun onPhaseTaskComplete() {
         if (isAbsoluteLastStep()) {
             isAllComplete = true
@@ -143,15 +142,20 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         resetStrokeState()
     }
 
-    fun selectComponent(component: String) {
-        val cp = currentChar ?: return
+    // FIX #3: options are identified by unique ID so duplicate radicals work correctly
+    fun selectComponent(optionId: Int, component: String): Boolean {
+        val cp = currentChar ?: return false
         val expectedIndex = selectedComponents.size
-        if (expectedIndex >= cp.orderedComponents.size) return
-        if (component == cp.orderedComponents[expectedIndex].char.toString()) {
+        if (expectedIndex >= cp.orderedComponents.size) return false
+        if (usedOptionIds.contains(optionId)) return false
+        return if (component == cp.orderedComponents[expectedIndex].char.toString()) {
             selectedComponents.add(component)
+            usedOptionIds.add(optionId)
             if (selectedComponents.size == cp.orderedComponents.size) onPhaseTaskComplete()
+            true
         } else {
             totalErrors++
+            false
         }
     }
 
@@ -180,5 +184,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         currentStrokePoints.clear()
         completedStrokes.clear()
         selectedComponents.clear()
+        usedOptionIds.clear()
     }
 }
