@@ -44,7 +44,15 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
 
         Box(Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when (phase) {
-                PracticePhase.ANIMATION -> AnimationCanvas(medians = currentChar.medians, modifier = Modifier.size(100.dp), autoPlay = true, loop = true, onComplete = {})
+                // Inside the TOP BLOCK, replace the ANIMATION case with:
+                PracticePhase.ANIMATION -> AnimationCanvas(
+                    medians = currentChar.medians,
+                    strokes = currentChar.strokes,   // <-- now passed
+                    modifier = Modifier.size(100.dp),
+                    autoPlay = true,
+                    loop = true,
+                    onComplete = {}
+                )
                 PracticePhase.TRACE_WITH_TEMPLATE -> Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
                 PracticePhase.STRUCTURE_QUIZ -> Text("Select components in writing order", style = MaterialTheme.typography.titleMedium)
                 PracticePhase.TRACE_BLIND_TEMPLATE -> Text("Draw with template", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
