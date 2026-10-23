@@ -27,6 +27,7 @@ fun WordPage(
     onComponentClick: (String) -> Unit,
     onPracticeClick: (String) -> Unit
 ) {
+    // Intercepts the phone's native back button to navigate properly
     BackHandler(enabled = true) { onBackClick() }
 
     val context = LocalContext.current
@@ -62,7 +63,10 @@ fun WordPage(
 
         val data = charData!!
         
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()), 
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
             Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(8.dp))
@@ -84,18 +88,39 @@ fun WordPage(
                 Text("Stroke Order", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Start))
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
                     items(word.toList().map { it.toString() }) { char ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(char, style = MaterialTheme.typography.titleMedium)
+                        // FIX: The Column is now explicitly 160.dp wide so the text 
+                        // perfectly centers above the larger 160.dp animation box.
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.width(160.dp)
+                        ) {
+                            Text(
+                                char, 
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            
                             val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
                             LaunchedEffect(char) { miniVm.loadCharacters(char) }
                             val charProgress = miniVm.characters.firstOrNull()
                             
                             if (charProgress != null && charProgress.medians.isNotEmpty()) {
-                                AnimationCanvas(medians = charProgress.medians, modifier = Modifier.size(100.dp), autoPlay = true, onComplete = {})
+                                AnimationCanvas(
+                                    medians = charProgress.medians,
+                                    modifier = Modifier.size(160.dp),   // Bigger box
+                                    autoPlay = true,
+                                    loop = true,                        // Loops continuously
+                                    onComplete = {}
+                                )
                             } else {
-                                Box(modifier = Modifier.size(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(24.dp)) }
+                                Box(modifier = Modifier.size(160.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                }
                             }
                         }
                     }
@@ -105,7 +130,11 @@ fun WordPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(onClick = { onPracticeClick(word) }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = MaterialTheme.shapes.medium) {
+        Button(
+            onClick = { onPracticeClick(word) }, 
+            modifier = Modifier.fillMaxWidth().height(56.dp), 
+            shape = MaterialTheme.shapes.medium
+        ) {
             Text("Practice", style = MaterialTheme.typography.titleMedium)
         }
     }
