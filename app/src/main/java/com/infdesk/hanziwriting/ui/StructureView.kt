@@ -42,15 +42,36 @@ private fun IdsNodeView(node: IdsNode, leafRank: Map<Int, Int>, selectedCount: I
                 '⿱', '⿳' -> Column(modifier) {
                     node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxWidth().weight(1f)) }
                 }
-                // FIX: enclosures & overlap no longer overlap ugly — stacked with inner inset
-                else -> Column(modifier) {
-                    node.children.forEachIndexed { i, child ->
-                        val childMod = if (i == 0) {
-                            Modifier.fillMaxWidth().weight(1f)
-                        } else {
-                            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp)
+                '⿻' -> Box(modifier) {
+                    node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxSize()) }
+                }
+                // Enclosures: outer full-size, inner smaller + offset to the open side (no overlap!)
+                else -> {
+                    val (innerAlign, innerFraction) = when (node.operator) {
+                        '⿴' -> Alignment.Center to 0.55f        // full surround (国)
+                        '⿵' -> Alignment.BottomCenter to 0.65f   // top surround (同)
+                        '⿶' -> Alignment.TopCenter to 0.65f      // bottom surround (凶)
+                        '⿷' -> Alignment.CenterEnd to 0.65f      // left surround (区)
+                        '⿸' -> Alignment.BottomEnd to 0.65f      // top-left (床)
+                        '⿹' -> Alignment.BottomStart to 0.65f    // top-right (句)
+                        '⿺' -> Alignment.TopEnd to 0.55f         // bottom-left (匕) - smaller inner
+                        else -> Alignment.Center to 0.6f
+                    }
+                    Box(modifier) {
+                        // Outer polygon: full size
+                        if (node.children.isNotEmpty()) {
+                            IdsNodeView(node.children[0], leafRank, selectedCount, Modifier.fillMaxSize())
                         }
-                        IdsNodeView(child, leafRank, selectedCount, childMod)
+                        // Inner polygon: smaller and offset to the open side
+                        if (node.children.size > 1) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize(innerFraction)
+                                    .align(innerAlign)
+                            ) {
+                                IdsNodeView(node.children[1], leafRank, selectedCount, Modifier.fillMaxSize())
+                            }
+                        }
                     }
                 }
             }
@@ -69,7 +90,6 @@ private fun LeafBox(leaf: IdsNode.Leaf, rank: Int, selectedCount: Int, modifier:
         rank == selectedCount -> 1
         else -> 0
     }
-    // Filled polygons now use the SAME colors as the option buttons
     val fill = when (state) {
         2 -> primary
         1 -> primary.copy(alpha = 0.15f)
