@@ -12,9 +12,10 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
+import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.HanziTransform
 import com.infdesk.hanziwriting.utils.IdsNode
-import com.infdesk.hanziwriting.utils.IdsTreeBuilder
+import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
@@ -63,7 +64,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
-    // FIX #3: track used option buttons by unique ID (handles duplicate radicals)
     val usedOptionIds = mutableStateListOf<Int>()
 
     private val gson = Gson()
@@ -85,15 +85,41 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     @Suppress("UNCHECKED_CAST")
                     val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
 
-                    val buildResult = IdsTreeBuilder(database.hanziDao()).build(cp.character, medians.size)
-                    val orderedComponents = buildResult.atomicLeaves
-                        .map { ComponentInfo(it.char, it.index, buildResult.leafRank[it.index] ?: Int.MAX_VALUE) }
-                        .sortedBy { it.order }
+                    // Simple (non-recursive) IDS decomposition
+                    val idsRoot = IdsParser.parse(charData.decomposition)
+                    val leaves = IdsParser.getLeavesWithIndex(idsRoot)
+                    val orderedComponents = mutableListOf<ComponentInfo>()
+                    val leafRank = mutableMapOf<Int, Int>()
+
+                    val firstAppearance = mutableMapOf<Int, Int>()
+                    if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
+                        try {
+                            val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
+                            val matches: List<List<Number>?> = gson.fromJson(charData.matchesJson, matchesType)
+                            matches.forEachIndexed { strokeIndex, path ->
+                                if (path != null) {
+                                    val intPath = path.map { it.toInt() }
+                                    val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
+                                    if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
+                                        firstAppearance[leafIndex] = strokeIndex
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            DebugLog.e("PracticeVM", "matches parse failed", e)
+                        }
+                    }
+
+                    val sortedLeaves = leaves.sortedBy { firstAppearance[it.index] ?: Int.MAX_VALUE }
+                    sortedLeaves.forEachIndexed { rank, leaf ->
+                        orderedComponents.add(ComponentInfo(leaf.char, leaf.index, rank))
+                        leafRank[leaf.index] = rank
+                    }
 
                     characters[index] = cp.copy(
                         charData = charData, medians = medians, strokes = strokes,
                         orderedComponents = orderedComponents,
-                        idsRoot = buildResult.root, leafRank = buildResult.leafRank
+                        idsRoot = idsRoot, leafRank = leafRank
                     )
                 }
             }
@@ -142,7 +168,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         resetStrokeState()
     }
 
-    // FIX #3: options are identified by unique ID so duplicate radicals work correctly
     fun selectComponent(optionId: Int, component: String): Boolean {
         val cp = currentChar ?: return false
         val expectedIndex = selectedComponents.size
