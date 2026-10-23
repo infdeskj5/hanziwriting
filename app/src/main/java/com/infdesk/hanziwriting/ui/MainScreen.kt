@@ -50,66 +50,56 @@ fun LoadingScreen() {
 @Composable
 fun HanziWritingApp() {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Search) }
-    var wordToView by remember { mutableStateOf<String?>(null) }
+    var wordBackStack by remember { mutableStateOf<List<String>>(emptyList()) }  // STACK, not a single value
     var practiceCharacter by remember { mutableStateOf<String?>(null) }
     var practiceListId by remember { mutableStateOf<Int?>(null) }
-
-    // Lifted Search State
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
+
+    val currentWord = wordBackStack.lastOrNull()
 
     val displayState = when {
         practiceListId != null -> "ListPractice"
         practiceCharacter != null -> "Practice"
-        wordToView != null -> "WordPage"
+        currentWord != null -> "WordPage"
         else -> currentScreen.name
     }
 
-    Scaffold(
-        bottomBar = {
-            if (displayState == "Search" || displayState == "Lists" || displayState == "Settings") {
-                NavigationBar {
-                    Screen.entries.forEach { screen ->
-                        NavigationBarItem(
-                            icon = { Icon(screen.icon, contentDescription = screen.title) },
-                            label = { Text(screen.title) },
-                            selected = currentScreen == screen,
-                            onClick = {
-                                currentScreen = screen
-                                wordToView = null
-                                practiceCharacter = null
-                                practiceListId = null
-                            }
-                        )
-                    }
+    Scaffold(bottomBar = {
+        if (displayState == "Search" || displayState == "Lists" || displayState == "Settings") {
+            NavigationBar {
+                Screen.entries.forEach { screen ->
+                    NavigationBarItem(
+                        icon = { Icon(screen.icon, contentDescription = screen.title) },
+                        label = { Text(screen.title) },
+                        selected = currentScreen == screen,
+                        onClick = {
+                            currentScreen = screen
+                            wordBackStack = emptyList()
+                            practiceCharacter = null
+                            practiceListId = null
+                        }
+                    )
                 }
             }
         }
-    ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
+    }) { paddingValues ->
+        Box(Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
             when (displayState) {
                 "Search" -> SearchScreen(
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    searchResults = searchResults,
-                    onResultsChange = { searchResults = it },
-                    onWordClick = { word -> wordToView = word }
+                    searchQuery = searchQuery, onSearchQueryChange = { searchQuery = it },
+                    searchResults = searchResults, onResultsChange = { searchResults = it },
+                    onWordClick = { word -> wordBackStack = listOf(word) }   // start a new stack
                 )
                 "WordPage" -> WordPage(
-                    word = wordToView!!,
-                    onBackClick = { wordToView = null },
-                    onComponentClick = { comp -> wordToView = comp },
+                    word = currentWord!!,
+                    onBackClick = { wordBackStack = wordBackStack.dropLast(1) },   // POP -> previous word or search
+                    onComponentClick = { comp -> wordBackStack = wordBackStack + comp },  // PUSH
                     onPracticeClick = { word -> practiceCharacter = word }
                 )
-                "Practice" -> PracticeScreen(
-                    wordToPractice = practiceCharacter,
-                    onBackClick = { practiceCharacter = null }
-                )
+                "Practice" -> PracticeScreen(wordToPractice = practiceCharacter, onBackClick = { practiceCharacter = null })
                 "Lists" -> ListsScreen(onPracticeListClick = { listId -> practiceListId = listId })
-                "ListPractice" -> ListPracticeScreen(
-                    listId = practiceListId!!,
-                    onBackClick = { practiceListId = null }
-                )
+                "ListPractice" -> ListPracticeScreen(listId = practiceListId!!, onBackClick = { practiceListId = null })
                 "Settings" -> SettingsScreen()
             }
         }
