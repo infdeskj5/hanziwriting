@@ -36,13 +36,13 @@ private fun IdsNodeView(node: IdsNode, leafRank: Map<Int, Int>, selectedCount: I
         is IdsNode.Leaf -> LeafBox(node, leafRank[node.index] ?: -1, selectedCount, modifier)
         is IdsNode.Branch -> {
             when (node.operator) {
-                '⿰', '' -> Row(modifier) {
+                '⿰', '⿲' -> Row(modifier) {
                     node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.weight(1f).fillMaxHeight()) }
                 }
-                '⿱', '' -> Column(modifier) {
+                '⿱', '⿳' -> Column(modifier) {
                     node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxWidth().weight(1f)) }
                 }
-                // FIX #2: enclosures & overlap no longer overlap ugly — stacked with inner inset
+                // FIX: enclosures & overlap no longer overlap ugly — stacked with inner inset
                 else -> Column(modifier) {
                     node.children.forEachIndexed { i, child ->
                         val childMod = if (i == 0) {
@@ -69,7 +69,7 @@ private fun LeafBox(leaf: IdsNode.Leaf, rank: Int, selectedCount: Int, modifier:
         rank == selectedCount -> 1
         else -> 0
     }
-    // FIX #4: filled polygons now use the SAME colors as the option buttons
+    // Filled polygons now use the SAME colors as the option buttons
     val fill = when (state) {
         2 -> primary
         1 -> primary.copy(alpha = 0.15f)
