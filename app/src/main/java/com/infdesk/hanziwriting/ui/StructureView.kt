@@ -36,21 +36,21 @@ private fun IdsNodeView(node: IdsNode, leafRank: Map<Int, Int>, selectedCount: I
         is IdsNode.Leaf -> LeafBox(node, leafRank[node.index] ?: -1, selectedCount, modifier)
         is IdsNode.Branch -> {
             when (node.operator) {
-                '⿰', '⿲' -> Row(modifier) {
+                '⿰', '' -> Row(modifier) {
                     node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.weight(1f).fillMaxHeight()) }
                 }
-                '⿱', '⿳' -> Column(modifier) {
+                '⿱', '' -> Column(modifier) {
                     node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxWidth().weight(1f)) }
                 }
-                '⿻' -> Box(modifier) {
-                    node.children.forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxSize()) }
-                }
-                else -> Box(modifier) { // enclosures
-                    if (node.children.isNotEmpty()) IdsNodeView(node.children[0], leafRank, selectedCount, Modifier.fillMaxSize())
-                    if (node.children.size > 1) {
-                        Box(Modifier.fillMaxSize().padding(14.dp)) {
-                            node.children.drop(1).forEach { IdsNodeView(it, leafRank, selectedCount, Modifier.fillMaxSize()) }
+                // FIX #2: enclosures & overlap no longer overlap ugly — stacked with inner inset
+                else -> Column(modifier) {
+                    node.children.forEachIndexed { i, child ->
+                        val childMod = if (i == 0) {
+                            Modifier.fillMaxWidth().weight(1f)
+                        } else {
+                            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp)
                         }
+                        IdsNodeView(child, leafRank, selectedCount, childMod)
                     }
                 }
             }
@@ -61,6 +61,7 @@ private fun IdsNodeView(node: IdsNode, leafRank: Map<Int, Int>, selectedCount: I
 @Composable
 private fun LeafBox(leaf: IdsNode.Leaf, rank: Int, selectedCount: Int, modifier: Modifier) {
     val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val outline = MaterialTheme.colorScheme.outline
     val state = when {
         rank < 0 -> 0
@@ -68,8 +69,9 @@ private fun LeafBox(leaf: IdsNode.Leaf, rank: Int, selectedCount: Int, modifier:
         rank == selectedCount -> 1
         else -> 0
     }
+    // FIX #4: filled polygons now use the SAME colors as the option buttons
     val fill = when (state) {
-        2 -> primary.copy(alpha = 0.5f)
+        2 -> primary
         1 -> primary.copy(alpha = 0.15f)
         else -> Color.Transparent
     }
@@ -81,9 +83,8 @@ private fun LeafBox(leaf: IdsNode.Leaf, rank: Int, selectedCount: Int, modifier:
             .background(fill, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center
     ) {
-        // Request #2: show the radical inside the polygon once correctly selected
         if (state == 2) {
-            Text(leaf.char.toString(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(leaf.char.toString(), style = MaterialTheme.typography.titleMedium, color = onPrimary)
         }
     }
 }
