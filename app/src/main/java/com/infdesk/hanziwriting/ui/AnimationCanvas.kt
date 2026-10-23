@@ -13,8 +13,7 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onSizeChanged
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 
@@ -28,21 +27,23 @@ fun AnimationCanvas(
     loop: Boolean = false,
     onComplete: () -> Unit = {}
 ) {
-    val density = LocalDensity.current
-    val canvasSizePx = with(density) { 100.dp.toPx() }
+    // FIX #1: track the REAL pixel size so the drawing always fills the given box
+    var sizePx by remember { mutableFloatStateOf(0f) }
 
-    // Precompute each stroke's path + measure ONCE (this is what makes it smooth)
-    val prepared = remember(medians, canvasSizePx) {
-        val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-        medians.map { pts ->
-            val path = Path()
-            pts.forEachIndexed { i, pt ->
-                val cp = HanziTransform.toCanvas(pt, scale)
-                if (i == 0) path.moveTo(cp.x, cp.y) else path.lineTo(cp.x, cp.y)
+    val prepared = remember(medians, sizePx) {
+        if (sizePx <= 0f) emptyList() else {
+            val scale = sizePx / HanziTransform.GRID_WIDTH
+            val offsetY = (sizePx - HanziTransform.GRID_HEIGHT * scale) / 2f
+            medians.map { pts ->
+                val path = Path()
+                pts.forEachIndexed { i, pt ->
+                    val cp = HanziTransform.toCanvas(pt, scale)
+                    if (i == 0) path.moveTo(cp.x, cp.y + offsetY) else path.lineTo(cp.x, cp.y + offsetY)
+                }
+                val m = PathMeasure()
+                m.setPath(path, false)
+                PreparedStroke(m, m.length)
             }
-            val m = PathMeasure()
-            m.setPath(path, false)
-            PreparedStroke(m, m.length)
         }
     }
 
@@ -65,9 +66,14 @@ fun AnimationCanvas(
     }
 
     val strokeColor = MaterialTheme.colorScheme.primary
-    val strokeWidth = canvasSizePx * 0.08f
+    val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
 
-    Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+    Canvas(
+        modifier = modifier
+            .onSizeChanged { sizePx = it.width.toFloat() }
+            .background(surfaceColor)
+    ) {
+        val strokeWidth = size.width * 0.09f
         for (i in 0 until currentStroke) {
             if (i < prepared.size) {
                 val full = Path()
