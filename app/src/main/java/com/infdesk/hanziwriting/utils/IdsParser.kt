@@ -2,7 +2,7 @@ package com.infdesk.hanziwriting.utils
 
 sealed class IdsNode {
     data class Leaf(val char: Char, val index: Int) : IdsNode()
-    data class Branch(val operator: Char, val children: List<IdsNode>, val sourceChar: String = "") : IdsNode()
+    data class Branch(val operator: Char, val children: List<IdsNode>) : IdsNode()
 }
 
 object IdsParser {
@@ -43,5 +43,15 @@ object IdsParser {
         }
         if (node != null) traverse(node)
         return leaves
+    }
+
+    fun resolvePath(node: IdsNode?, path: List<Int>): Int {
+        if (node == null) return -1
+        var current = node
+        for (i in path) {
+            if (current is IdsNode.Branch && i >= 0 && i < current.children.size) current = current.children[i]
+            else return -1
+        }
+        return if (current is IdsNode.Leaf) current.index else -1
     }
 }
