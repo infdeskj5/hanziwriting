@@ -42,7 +42,6 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
         }
         val data = currentChar.charData!!
 
-        // TOP BLOCK
         Box(Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when (phase) {
                 PracticePhase.ANIMATION -> AnimationCanvas(medians = currentChar.medians, modifier = Modifier.size(100.dp), autoPlay = true, loop = true, onComplete = {})
@@ -54,7 +53,6 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
         }
         Spacer(Modifier.height(8.dp))
 
-        // DEFINITION (scrollable)
         Box(Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
@@ -63,7 +61,6 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
         }
         Spacer(Modifier.height(8.dp))
 
-        // MIDDLE: structure view (quiz) OR drawing canvas
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 StructureView(root = currentChar.idsRoot, leafRank = currentChar.leafRank,
@@ -77,16 +74,21 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
         }
         Spacer(Modifier.height(16.dp))
 
-        // BOTTOM CONTROLS
         if (phase == PracticePhase.STRUCTURE_QUIZ && !viewModel.waitingForNext && !viewModel.isAllComplete) {
-            val correctComponents = currentChar.orderedComponents.map { it.char.toString() }
-            val distractors = listOf("氵","木","口","扌","忄","艹","辶","阝","刂","日","月","女","心")
-            val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
+            // FIX #3: each option button gets a UNIQUE ID so duplicate radicals
+            // (like the repeated 一 / 丨 in 型) each stay selectable until individually used
+            val options = remember(currentChar) {
+                val correct = currentChar.orderedComponents.map { it.char.toString() }
+                val pool = listOf("氵","木","口","扌","忄","艹","辶","阝","刂","日","月","女","心","土","亻","","厂","广")
+                val distractors = pool.filter { it !in correct }.shuffled().take(4)
+                (correct + distractors).shuffled().mapIndexed { idx, c -> idx to c }
+            }
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                options.forEach { comp ->
-                    Button(onClick = { viewModel.selectComponent(comp) }, enabled = !viewModel.selectedComponents.contains(comp)) {
-                        Text(comp, style = MaterialTheme.typography.titleMedium)
-                    }
+                options.forEach { (id, comp) ->
+                    Button(
+                        onClick = { viewModel.selectComponent(id, comp) },
+                        enabled = !viewModel.usedOptionIds.contains(id)
+                    ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
                 }
             }
         } else {
