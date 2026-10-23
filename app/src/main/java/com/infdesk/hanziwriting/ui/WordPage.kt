@@ -87,39 +87,41 @@ fun WordPage(
                 Spacer(modifier = Modifier.height(24.dp))
                 Text("Stroke Order", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Start))
                 Spacer(modifier = Modifier.height(8.dp))
-                
+            
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp)
                 ) {
                     items(word.toList().map { it.toString() }) { char ->
-                        // FIX: The Column is now explicitly 160.dp wide so the text 
-                        // perfectly centers above the larger 160.dp animation box.
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(160.dp)
+                            modifier = Modifier.width(200.dp)   // bigger box
                         ) {
                             Text(
-                                char, 
+                                char,
                                 style = MaterialTheme.typography.titleLarge,
                                 modifier = Modifier.padding(bottom = 8.dp)
                             )
-                            
+            
                             val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
                             LaunchedEffect(char) { miniVm.loadCharacters(char) }
                             val charProgress = miniVm.characters.firstOrNull()
-                            
-                            if (charProgress != null && charProgress.medians.isNotEmpty()) {
-                                AnimationCanvas(
-                                    medians = charProgress.medians,
-                                    modifier = Modifier.size(160.dp),   // Bigger box
-                                    autoPlay = true,
-                                    loop = true,                        // Loops continuously
-                                    onComplete = {}
-                                )
-                            } else {
-                                Box(modifier = Modifier.size(160.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            
+                            Box(
+                                modifier = Modifier.size(200.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (charProgress != null && charProgress.medians.isNotEmpty()) {
+                                    AnimationCanvas(
+                                        medians = charProgress.medians,
+                                        strokes = charProgress.strokes,   // <-- passed
+                                        modifier = Modifier.size(170.dp), // slightly smaller than box = visible padding
+                                        autoPlay = true,
+                                        loop = true,
+                                        onComplete = {}
+                                    )
+                                } else {
+                                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
                                 }
                             }
                         }
