@@ -1,7 +1,7 @@
 package com.infdesk.hanziwriting.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -42,7 +42,6 @@ fun AnimationCanvas(
 ) {
     var sizePx by remember { mutableFloatStateOf(0f) }
 
-    // Precompute the filled SVG paths and the center median paths
     val prepared = remember(strokes, medians, sizePx) {
         if (sizePx <= 0f || strokes.isEmpty()) emptyList() else {
             val scale = sizePx / HanziTransform.GRID_WIDTH
@@ -80,11 +79,15 @@ fun AnimationCanvas(
                 for (i in prepared.indices) {
                     currentStroke = i
                     progress.snapTo(0f)
-                    progress.animateTo(1f, tween(durationMillis = 450, easing = LinearEasing))
-                    delay(120)
+                    // FIX: 600ms with ease-out for a smooth, natural brush feel
+                    progress.animateTo(
+                        targetValue = 1f, 
+                        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing)
+                    )
+                    delay(150) // Pause between strokes
                 }
                 if (!loop) { onComplete(); break }
-                delay(500)
+                delay(800) // Pause before looping
             }
         }
     }
@@ -100,14 +103,14 @@ fun AnimationCanvas(
         Canvas(modifier = Modifier.matchParentSize()) {
             val measure = PathMeasure()
             
-            // Draw fully completed strokes
+            // 1. Draw fully completed strokes (Normal color)
             for (i in 0 until currentStroke) {
                 if (i < prepared.size) {
                     drawPath(prepared[i].svgPath, strokeColor)
                 }
             }
             
-            // Draw the currently animating stroke
+            // 2. Draw the currently animating stroke
             if (currentStroke < prepared.size) {
                 val st = prepared[currentStroke]
                 measure.setPath(st.medianPath, false)
@@ -116,23 +119,22 @@ fun AnimationCanvas(
                 val segmentPath = Path()
                 measure.getSegment(0f, st.medianLength * progress.value, segmentPath, true)
 
-                // Use drawIntoCanvas to access saveLayer and BlendMode
                 drawIntoCanvas { canvas ->
                     val bounds = Rect(0f, 0f, size.width, size.height)
-                    val layerPaint = Paint()
-                    canvas.saveLayer(bounds, layerPaint)
+                    canvas.saveLayer(bounds, Paint())
 
-                    // 1. Draw the destination (the filled SVG shape)
+                    // Draw the destination (the filled SVG shape) in the CORRECT color
                     drawPath(st.svgPath, strokeColor)
 
-                    // 2. Draw the thick median segment as a mask to "reveal" the SVG shape along the curve
+                    // Draw the mask (the median segment)
+                    // FIX: Use DstIn to keep the destination's color where the mask overlaps!
                     val maskPaint = Paint().apply {
-                        color = Color.Black
+                        color = Color.Black 
                         style = PaintingStyle.Stroke
-                        strokeWidth = size.width * 1.5f // Extra wide to ensure full coverage of the shape
+                        strokeWidth = size.width * 1.5f // Thick enough to cover the SVG shape
                         strokeCap = StrokeCap.Round
                         strokeJoin = StrokeJoin.Round
-                        blendMode = BlendMode.SrcIn
+                        blendMode = BlendMode.DstIn 
                     }
                     canvas.drawPath(segmentPath, maskPaint)
 
