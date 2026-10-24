@@ -47,23 +47,21 @@ fun AnimationCanvas(
             val scale = sizePx / HanziTransform.GRID_WIDTH
             strokes.mapIndexedNotNull { i, svg ->
                 try {
-                    // 1. Parse the filled SVG shape
                     val androidSvgPath = PathParser.createPathFromPathData(svg).apply {
                         transform(HanziTransform.matrix(scale))
                     }
                     val svgPath = androidSvgPath.asComposePath()
 
-                    // 2. Build the center median line
                     val medianPath = Path()
                     val medianPoints = medians.getOrNull(i) ?: emptyList()
                     medianPoints.forEachIndexed { idx, pt ->
                         val cp = HanziTransform.toCanvas(pt, scale)
                         if (idx == 0) medianPath.moveTo(cp.x, cp.y) else medianPath.lineTo(cp.x, cp.y)
                     }
-                    
+
                     val measure = PathMeasure()
                     measure.setPath(medianPath, false)
-                    
+
                     PreparedStroke(svgPath, medianPath, measure.length)
                 } catch (e: Exception) { null }
             }
@@ -79,15 +77,14 @@ fun AnimationCanvas(
                 for (i in prepared.indices) {
                     currentStroke = i
                     progress.snapTo(0f)
-                    // FIX: 600ms with ease-out for a smooth, natural brush feel
                     progress.animateTo(
-                        targetValue = 1f, 
-                        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing)
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
                     )
-                    delay(150) // Pause between strokes
+                    delay(200) // pause between strokes so each one reads clearly
                 }
                 if (!loop) { onComplete(); break }
-                delay(800) // Pause before looping
+                delay(900) // pause before looping
             }
         }
     }
@@ -102,20 +99,19 @@ fun AnimationCanvas(
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             val measure = PathMeasure()
-            
-            // 1. Draw fully completed strokes (Normal color)
+
+            // Fully completed strokes
             for (i in 0 until currentStroke) {
                 if (i < prepared.size) {
                     drawPath(prepared[i].svgPath, strokeColor)
                 }
             }
-            
-            // 2. Draw the currently animating stroke
+
+            // Currently animating stroke
             if (currentStroke < prepared.size) {
                 val st = prepared[currentStroke]
                 measure.setPath(st.medianPath, false)
-                
-                // Get the segment of the median line up to the current progress
+
                 val segmentPath = Path()
                 measure.getSegment(0f, st.medianLength * progress.value, segmentPath, true)
 
@@ -123,18 +119,19 @@ fun AnimationCanvas(
                     val bounds = Rect(0f, 0f, size.width, size.height)
                     canvas.saveLayer(bounds, Paint())
 
-                    // Draw the destination (the filled SVG shape) in the CORRECT color
+                    // Destination: the filled calligraphic shape in the correct color
                     drawPath(st.svgPath, strokeColor)
 
-                    // Draw the mask (the median segment)
-                    // FIX: Use DstIn to keep the destination's color where the mask overlaps!
+                    // Source mask: a brush-sized stroke travelling along the median.
+                    // FIX: width is now ~35% of the box (a real stroke's thickness).
+                    // Previously 150% made the round cap reveal the whole stroke instantly.
                     val maskPaint = Paint().apply {
-                        color = Color.Black 
+                        color = Color.Black
                         style = PaintingStyle.Stroke
-                        strokeWidth = size.width * 1.5f // Thick enough to cover the SVG shape
+                        strokeWidth = size.width * 0.35f
                         strokeCap = StrokeCap.Round
                         strokeJoin = StrokeJoin.Round
-                        blendMode = BlendMode.DstIn 
+                        blendMode = BlendMode.DstIn
                     }
                     canvas.drawPath(segmentPath, maskPaint)
 
