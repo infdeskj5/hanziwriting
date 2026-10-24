@@ -4,7 +4,7 @@ import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -23,8 +23,17 @@ import kotlinx.coroutines.delay
 private data class PreparedStroke(
     val svgPath: Path,
     val medianAndroid: AndroidPath,
-    val medianLength: Float
+    val medianLength: Float,
+    val durationMs: Int
 )
+
+// ===== SPEED KNOBS (tweak these if you ever want it faster/slower) =====
+private const val MS_PER_GRID_UNIT = 1.6f          // higher = slower
+private const val MIN_STROKE_MS = 600
+private const val MAX_STROKE_MS = 1800
+private const val PAUSE_BETWEEN_STROKES_MS = 250L
+private const val PAUSE_BEFORE_LOOP_MS = 1000L
+// ========================================================================
 
 @Composable
 fun AnimationCanvas(
@@ -55,7 +64,12 @@ fun AnimationCanvas(
                     }
                     val pm = AndroidPathMeasure()
                     pm.setPath(medianAndroid, false)
-                    PreparedStroke(svgPath, medianAndroid, pm.length)
+
+                    // Duration proportional to the stroke's real length (natural handwriting feel)
+                    val gridLength = pm.length / scale
+                    val dur = (gridLength * MS_PER_GRID_UNIT).toInt().coerceIn(MIN_STROKE_MS, MAX_STROKE_MS)
+
+                    PreparedStroke(svgPath, medianAndroid, pm.length, dur)
                 } catch (e: Exception) { null }
             }
         }
@@ -70,11 +84,15 @@ fun AnimationCanvas(
                 for (i in prepared.indices) {
                     currentStroke = i
                     progress.snapTo(0f)
-                    progress.animateTo(1f, tween(durationMillis = 700, easing = FastOutSlowInEasing))
-                    delay(200)
+                    // Steady, uniform reveal at each stroke's natural duration
+                    progress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = prepared[i].durationMs, easing = LinearEasing)
+                    )
+                    delay(PAUSE_BETWEEN_STROKES_MS)
                 }
                 if (!loop) { onComplete(); break }
-                delay(900)
+                delay(PAUSE_BEFORE_LOOP_MS)
             }
         }
     }
@@ -83,7 +101,6 @@ fun AnimationCanvas(
     val ghostColor = strokeColor.copy(alpha = 0.12f)
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
 
-    // Reusable native objects (no per-frame allocation)
     val brushPaint = remember {
         AndroidPaint().apply {
             style = AndroidPaint.Style.STROKE
@@ -106,23 +123,17 @@ fun AnimationCanvas(
             for (i in prepared.indices) {
                 val st = prepared[i]
                 when {
-                    // Completed strokes: full calligraphic shape
                     i < currentStroke -> drawPath(st.svgPath, strokeColor)
 
-                    // Animating stroke: ghost preview + progressive ink
                     i == currentStroke -> {
                         drawPath(st.svgPath, ghostColor)
 
-                        // 1. Cut the median line at the current progress point
                         pm.setPath(st.medianAndroid, false)
                         segPath.reset()
                         pm.getSegment(0f, st.medianLength * progress.value, segPath, true)
-
-                        // 2. Convert the brushed line into a filled "tube" outline
                         tubePath.reset()
                         brushPaint.getFillPath(segPath, tubePath)
 
-                        // 3. Intersect tube with the calligraphic shape = the inked part
                         val revealed = Path.combine(
                             PathOperation.Intersect,
                             st.svgPath,
