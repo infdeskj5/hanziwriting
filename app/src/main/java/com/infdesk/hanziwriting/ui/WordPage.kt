@@ -41,7 +41,8 @@ fun WordPage(
         charData = dao.getCharacterExact(word)
         graphicsData = dao.getGraphics(word)
 
-        val idsSymbols = setOf('⿰', '', '', '⿳', '⿴', '', '', '⿷', '⿸', '⿹', '⿺', '', '？', ' ')
+        // FIX: All 12 IDS symbols are now correctly populated
+        val idsSymbols = setOf('⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻', '？', ' ')
         components = charData?.decomposition
             ?.filter { it !in idsSymbols }
             ?.map { it.toString() }
