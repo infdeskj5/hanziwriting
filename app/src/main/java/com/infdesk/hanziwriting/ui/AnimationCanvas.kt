@@ -78,7 +78,7 @@ fun AnimationCanvas(
                     // ORIGINAL SPEED restored: exactly 400ms per stroke, constant speed (LinearEasing)
                     progress.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = 400, easing = LinearEasing)
+                        animationSpec = tween(durationMillis = 650, easing = LinearEasing)
                     )
                     delay(150L) // Original pause between strokes
                 }
