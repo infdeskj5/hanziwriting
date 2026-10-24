@@ -25,9 +25,7 @@ object AssetParser {
                                 character = simplified,
                                 pinyin = pinyin,
                                 definition = definition.replace("/", ", "),
-                                radical = "",
-                                decomposition = "",
-                                matchesJson = ""
+                                radical = "", decomposition = "", matchesJson = "", mmaDefinition = ""
                             )
                         )
                     }
@@ -74,7 +72,23 @@ object AssetParser {
                         val radical = json.get("radical")?.asString ?: ""
                         val decomposition = json.get("decomposition")?.asString ?: ""
                         val matches = json.get("matches")?.toString() ?: ""
-                        dao.updateRadicalAndDecomp(character, radical, decomposition, matches)
+                        val mmaDefinition = json.get("definition")?.asString ?: ""
+                        val pinyinArr = json.getAsJsonArray("pinyin")
+                        val mmaPinyin = pinyinArr?.joinToString(" ") { it.asString } ?: ""
+
+                        // Add characters that CC-CEDICT doesn't have (many radicals)
+                        dao.insertCharacter(
+                            HanziCharacter(
+                                character = character,
+                                pinyin = mmaPinyin,
+                                definition = "",
+                                radical = radical,
+                                decomposition = decomposition,
+                                matchesJson = matches,
+                                mmaDefinition = mmaDefinition
+                            )
+                        )
+                        dao.updateRadicalAndDecomp(character, radical, decomposition, matches, mmaDefinition)
                         count++
                     } catch (_: Exception) { }
                 }
