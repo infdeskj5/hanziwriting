@@ -1,5 +1,8 @@
 package com.infdesk.hanziwriting.ui
 
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Path as AndroidPath
+import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -9,17 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Paint
-import androidx.compose.ui.graphics.PaintingStyle
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.asComposePath
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.core.graphics.PathParser
 import com.infdesk.hanziwriting.utils.HanziTransform
@@ -27,7 +22,7 @@ import kotlinx.coroutines.delay
 
 private data class PreparedStroke(
     val svgPath: Path,
-    val medianPath: Path,
+    val medianAndroid: AndroidPath,
     val medianLength: Float
 )
 
@@ -47,22 +42,20 @@ fun AnimationCanvas(
             val scale = sizePx / HanziTransform.GRID_WIDTH
             strokes.mapIndexedNotNull { i, svg ->
                 try {
-                    val androidSvgPath = PathParser.createPathFromPathData(svg).apply {
+                    val androidSvg = PathParser.createPathFromPathData(svg).apply {
                         transform(HanziTransform.matrix(scale))
                     }
-                    val svgPath = androidSvgPath.asComposePath()
+                    val svgPath = androidSvg.asComposePath()
 
-                    val medianPath = Path()
-                    val medianPoints = medians.getOrNull(i) ?: emptyList()
-                    medianPoints.forEachIndexed { idx, pt ->
+                    val medianAndroid = AndroidPath()
+                    val pts = medians.getOrNull(i) ?: emptyList()
+                    pts.forEachIndexed { idx, pt ->
                         val cp = HanziTransform.toCanvas(pt, scale)
-                        if (idx == 0) medianPath.moveTo(cp.x, cp.y) else medianPath.lineTo(cp.x, cp.y)
+                        if (idx == 0) medianAndroid.moveTo(cp.x, cp.y) else medianAndroid.lineTo(cp.x, cp.y)
                     }
-
-                    val measure = PathMeasure()
-                    measure.setPath(medianPath, false)
-
-                    PreparedStroke(svgPath, medianPath, measure.length)
+                    val pm = AndroidPathMeasure()
+                    pm.setPath(medianAndroid, false)
+                    PreparedStroke(svgPath, medianAndroid, pm.length)
                 } catch (e: Exception) { null }
             }
         }
@@ -77,20 +70,30 @@ fun AnimationCanvas(
                 for (i in prepared.indices) {
                     currentStroke = i
                     progress.snapTo(0f)
-                    progress.animateTo(
-                        targetValue = 1f,
-                        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
-                    )
-                    delay(200) // pause between strokes so each one reads clearly
+                    progress.animateTo(1f, tween(durationMillis = 700, easing = FastOutSlowInEasing))
+                    delay(200)
                 }
                 if (!loop) { onComplete(); break }
-                delay(900) // pause before looping
+                delay(900)
             }
         }
     }
 
     val strokeColor = MaterialTheme.colorScheme.primary
+    val ghostColor = strokeColor.copy(alpha = 0.12f)
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+
+    // Reusable native objects (no per-frame allocation)
+    val brushPaint = remember {
+        AndroidPaint().apply {
+            style = AndroidPaint.Style.STROKE
+            strokeCap = AndroidPaint.Cap.ROUND
+            strokeJoin = AndroidPaint.Join.ROUND
+        }
+    }
+    val segPath = remember { AndroidPath() }
+    val tubePath = remember { AndroidPath() }
+    val pm = remember { AndroidPathMeasure() }
 
     Box(
         modifier = modifier
@@ -98,44 +101,35 @@ fun AnimationCanvas(
             .background(surfaceColor)
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
-            val measure = PathMeasure()
+            brushPaint.strokeWidth = size.width * 0.35f
 
-            // Fully completed strokes
-            for (i in 0 until currentStroke) {
-                if (i < prepared.size) {
-                    drawPath(prepared[i].svgPath, strokeColor)
-                }
-            }
+            for (i in prepared.indices) {
+                val st = prepared[i]
+                when {
+                    // Completed strokes: full calligraphic shape
+                    i < currentStroke -> drawPath(st.svgPath, strokeColor)
 
-            // Currently animating stroke
-            if (currentStroke < prepared.size) {
-                val st = prepared[currentStroke]
-                measure.setPath(st.medianPath, false)
+                    // Animating stroke: ghost preview + progressive ink
+                    i == currentStroke -> {
+                        drawPath(st.svgPath, ghostColor)
 
-                val segmentPath = Path()
-                measure.getSegment(0f, st.medianLength * progress.value, segmentPath, true)
+                        // 1. Cut the median line at the current progress point
+                        pm.setPath(st.medianAndroid, false)
+                        segPath.reset()
+                        pm.getSegment(0f, st.medianLength * progress.value, segPath, true)
 
-                drawIntoCanvas { canvas ->
-                    val bounds = Rect(0f, 0f, size.width, size.height)
-                    canvas.saveLayer(bounds, Paint())
+                        // 2. Convert the brushed line into a filled "tube" outline
+                        tubePath.reset()
+                        brushPaint.getFillPath(segPath, tubePath)
 
-                    // Destination: the filled calligraphic shape in the correct color
-                    drawPath(st.svgPath, strokeColor)
-
-                    // Source mask: a brush-sized stroke travelling along the median.
-                    // FIX: width is now ~35% of the box (a real stroke's thickness).
-                    // Previously 150% made the round cap reveal the whole stroke instantly.
-                    val maskPaint = Paint().apply {
-                        color = Color.Black
-                        style = PaintingStyle.Stroke
-                        strokeWidth = size.width * 0.35f
-                        strokeCap = StrokeCap.Round
-                        strokeJoin = StrokeJoin.Round
-                        blendMode = BlendMode.DstIn
+                        // 3. Intersect tube with the calligraphic shape = the inked part
+                        val revealed = Path.combine(
+                            PathOperation.Intersect,
+                            st.svgPath,
+                            tubePath.asComposePath()
+                        )
+                        drawPath(revealed, strokeColor)
                     }
-                    canvas.drawPath(segmentPath, maskPaint)
-
-                    canvas.restore()
                 }
             }
         }
