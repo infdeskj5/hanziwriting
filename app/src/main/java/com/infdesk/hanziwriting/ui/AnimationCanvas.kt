@@ -4,7 +4,7 @@ import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -23,19 +23,11 @@ import kotlinx.coroutines.delay
 private data class PreparedStroke(
     val svgPath: Path,
     val medianAndroid: AndroidPath,
-    val medianLength: Float,
-    val durationMs: Int
+    val medianLength: Float
 )
-
-// ===== SPEED KNOBS =====
-private const val MIN_STROKE_MS = 450
-private const val MAX_STROKE_MS = 1400
-private const val PAUSE_BETWEEN_STROKES_MS = 250L
-private const val PAUSE_BEFORE_LOOP_MS = 1000L
 
 // Fraction of the stroke during which the brush "presses down" (width ramps 0 -> full).
 private const val BRUSH_PRESS_FRACTION = 0.15f
-// =======================
 
 @Composable
 fun AnimationCanvas(
@@ -67,13 +59,7 @@ fun AnimationCanvas(
                     val pm = AndroidPathMeasure()
                     pm.setPath(medianAndroid, false)
 
-                    val gridLength = pm.length / scale
-                    
-                    // FIX: Sub-linear scaling. Long strokes get a speed boost so they don't drag.
-                    // A short stroke takes ~500ms, a very long stroke maxes out at ~1350ms.
-                    val dur = (300 + gridLength * 0.7f).toInt().coerceIn(MIN_STROKE_MS, MAX_STROKE_MS)
-
-                    PreparedStroke(svgPath, medianAndroid, pm.length, dur)
+                    PreparedStroke(svgPath, medianAndroid, pm.length)
                 } catch (e: Exception) { null }
             }
         }
@@ -88,17 +74,16 @@ fun AnimationCanvas(
                 for (i in prepared.indices) {
                     currentStroke = i
                     progress.snapTo(0f)
+                    
+                    // ORIGINAL SPEED restored: exactly 400ms per stroke, constant speed (LinearEasing)
                     progress.animateTo(
                         targetValue = 1f,
-                        // FIX: LinearOutSlowInEasing maintains high speed for most of the stroke,
-                        // then gently decelerates at the very tip (like a brush lifting off).
-                        // This eliminates the "dragging" feeling in the middle of long strokes.
-                        animationSpec = tween(durationMillis = prepared[i].durationMs, easing = LinearOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 400, easing = LinearEasing)
                     )
-                    delay(PAUSE_BETWEEN_STROKES_MS)
+                    delay(150L) // Original pause between strokes
                 }
                 if (!loop) { onComplete(); break }
-                delay(PAUSE_BEFORE_LOOP_MS)
+                delay(1000L) // Pause before looping
             }
         }
     }
@@ -138,6 +123,7 @@ fun AnimationCanvas(
                         pm.getSegment(0f, st.medianLength * p, segPath, true)
                         tubePath.reset()
 
+                        // Brush width ramps from 0 during the first 15% of the stroke
                         val widthFactor = (p / BRUSH_PRESS_FRACTION).coerceIn(0f, 1f)
                         if (widthFactor > 0f && segPath.isEmpty == false) {
                             brushPaint.strokeWidth = size.width * 0.35f * widthFactor
