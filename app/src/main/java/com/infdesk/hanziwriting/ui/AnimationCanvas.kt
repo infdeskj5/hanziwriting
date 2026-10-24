@@ -134,7 +134,6 @@ fun AnimationCanvas(
 
                     i == currentStroke -> {
                         val p = progress.value
-                        drawPath(st.svgPath, ghostColor)
                         if (p > 0f) {
                             pm.setPath(st.medianAndroid, false)
 
