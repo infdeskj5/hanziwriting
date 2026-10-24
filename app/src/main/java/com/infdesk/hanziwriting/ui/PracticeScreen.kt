@@ -64,7 +64,14 @@ fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {})
         Box(Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
-                Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                if (data.definition.isNotBlank()) {
+                    Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                }
+                if (data.mmaDefinition.isNotBlank() && data.mmaDefinition != data.definition) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(data.mmaDefinition, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
