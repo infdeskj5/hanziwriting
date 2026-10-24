@@ -4,7 +4,7 @@ import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -28,14 +28,12 @@ private data class PreparedStroke(
 )
 
 // ===== SPEED KNOBS =====
-private const val MS_PER_GRID_UNIT = 1.6f
-private const val MIN_STROKE_MS = 600
-private const val MAX_STROKE_MS = 1800
+private const val MIN_STROKE_MS = 450
+private const val MAX_STROKE_MS = 1400
 private const val PAUSE_BETWEEN_STROKES_MS = 250L
 private const val PAUSE_BEFORE_LOOP_MS = 1000L
 
 // Fraction of the stroke during which the brush "presses down" (width ramps 0 -> full).
-// This is what makes the reveal start at exactly zero instead of showing a pre-drawn tip.
 private const val BRUSH_PRESS_FRACTION = 0.15f
 // =======================
 
@@ -70,7 +68,10 @@ fun AnimationCanvas(
                     pm.setPath(medianAndroid, false)
 
                     val gridLength = pm.length / scale
-                    val dur = (gridLength * MS_PER_GRID_UNIT).toInt().coerceIn(MIN_STROKE_MS, MAX_STROKE_MS)
+                    
+                    // FIX: Sub-linear scaling. Long strokes get a speed boost so they don't drag.
+                    // A short stroke takes ~500ms, a very long stroke maxes out at ~1350ms.
+                    val dur = (300 + gridLength * 0.7f).toInt().coerceIn(MIN_STROKE_MS, MAX_STROKE_MS)
 
                     PreparedStroke(svgPath, medianAndroid, pm.length, dur)
                 } catch (e: Exception) { null }
@@ -89,7 +90,10 @@ fun AnimationCanvas(
                     progress.snapTo(0f)
                     progress.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = prepared[i].durationMs, easing = LinearEasing)
+                        // FIX: LinearOutSlowInEasing maintains high speed for most of the stroke,
+                        // then gently decelerates at the very tip (like a brush lifting off).
+                        // This eliminates the "dragging" feeling in the middle of long strokes.
+                        animationSpec = tween(durationMillis = prepared[i].durationMs, easing = LinearOutSlowInEasing)
                     )
                     delay(PAUSE_BETWEEN_STROKES_MS)
                 }
@@ -134,9 +138,6 @@ fun AnimationCanvas(
                         pm.getSegment(0f, st.medianLength * p, segPath, true)
                         tubePath.reset()
 
-                        // FIX: brush width ramps from 0 during the first 15% of the stroke,
-                        // so at p = 0 the mask is empty and the ink truly starts at zero
-                        // (no pre-drawn round-cap blob at the starting point).
                         val widthFactor = (p / BRUSH_PRESS_FRACTION).coerceIn(0f, 1f)
                         if (widthFactor > 0f && segPath.isEmpty == false) {
                             brushPaint.strokeWidth = size.width * 0.35f * widthFactor
