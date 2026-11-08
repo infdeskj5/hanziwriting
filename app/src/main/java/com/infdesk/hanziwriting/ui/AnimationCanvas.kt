@@ -12,9 +12,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.PathParser
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 import kotlin.math.sin
@@ -23,8 +25,7 @@ private data class PreparedStroke(val measure: PathMeasure, val length: Float)
 
 @Composable
 fun AnimationCanvas(
-    medians: List<List<List<Double>>> = emptyList(),
-    strokes: List<List<List<Double>>> = medians, // Supports whichever parameter name the caller uses!
+    strokes: List<String>,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = false,
@@ -33,27 +34,27 @@ fun AnimationCanvas(
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
 
-    // Use whichever list was provided
-    val targetData = if (strokes.isNotEmpty()) strokes else medians
-
-    val prepared = remember(targetData, canvasSizePx) {
+    // Precompute each stroke's Path and PathMeasure from the SVG strings
+    val prepared = remember(strokes, canvasSizePx) {
         val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-        targetData.map { pts ->
-            val path = Path()
-            pts.forEachIndexed { i, pt ->
-                val cp = HanziTransform.toCanvas(pt, scale)
-                if (i == 0) path.moveTo(cp.x, cp.y) else path.lineTo(cp.x, cp.y)
+        strokes.mapNotNull { svg ->
+            try {
+                val androidPath = PathParser.createPathFromPathData(svg)
+                androidPath.transform(HanziTransform.matrix(scale))
+                val composePath = androidPath.asComposePath()
+                val m = PathMeasure()
+                m.setPath(composePath, false)
+                PreparedStroke(m, m.length)
+            } catch (e: Exception) {
+                null
             }
-            val m = PathMeasure()
-            m.setPath(path, false)
-            PreparedStroke(m, m.length)
         }
     }
 
     val progress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
 
-    // Human-like acceleration and deceleration curve
+    // Human-like acceleration and deceleration curve (EaseInOutCubic equivalent)
     val humanEasing = remember { CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f) }
 
     LaunchedEffect(prepared, autoPlay, loop) {
@@ -82,6 +83,7 @@ fun AnimationCanvas(
     val baseStrokeWidth = canvasSizePx * 0.08f
 
     Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+        // Draw completed strokes
         for (i in 0 until currentStroke) {
             if (i < prepared.size) {
                 val full = Path()
@@ -90,6 +92,7 @@ fun AnimationCanvas(
             }
         }
 
+        // Draw active animated stroke with variable pressure/width tapering
         if (currentStroke < prepared.size) {
             val p = prepared[currentStroke]
             val currentLen = p.length * progress.value
@@ -98,7 +101,6 @@ fun AnimationCanvas(
                 val seg = Path()
                 p.measure.getSegment(0f, currentLen, seg, true)
 
-                // Simulate subtle human width tapering/pressure
                 val pressureFactor = (sin(progress.value * Math.PI)).toFloat()
                 val dynamicWidth = baseStrokeWidth * (0.8f + (0.2f * pressureFactor))
 
