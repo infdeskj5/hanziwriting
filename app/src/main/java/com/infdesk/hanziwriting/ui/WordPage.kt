@@ -88,11 +88,14 @@ fun WordPage(
                             val miniVm = remember(char) { PracticeViewModel(AppDatabase.getDatabase(context)) }
                             LaunchedEffect(char) { miniVm.loadCharacters(char) }
                             val charProgress = miniVm.characters.firstOrNull()
-                            if (charProgress != null && charProgress.medians.isNotEmpty()) {
+                            // FIX: Added strokes parameter and set loop = true
+                            if (charProgress != null && charProgress.medians.isNotEmpty() && charProgress.strokes.isNotEmpty()) {
                                 AnimationCanvas(
-                                    medians = charProgress.medians, 
+                                    medians = charProgress.medians,
+                                    strokes = charProgress.strokes,
                                     modifier = Modifier.size(100.dp), 
-                                    autoPlay = true, 
+                                    autoPlay = true,
+                                    loop = true, 
                                     onComplete = {}
                                 )
                             } else {
