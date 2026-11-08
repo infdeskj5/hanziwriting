@@ -1,5 +1,8 @@
 package com.infdesk.hanziwriting.ui
 
+import android.graphics.Paint
+import android.graphics.Path as AndroidPath
+import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -8,49 +11,26 @@ import androidx.compose.foundation.background
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.PathParser
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 
-private data class PreparedStroke(val measure: PathMeasure, val length: Float)
-
-/**
- * Converts a sequence of points into a smooth path using Quadratic Bézier curves.
- * This eliminates jagged "robot" lines and mimics the natural flow of a human hand.
- */
-private fun createSmoothPath(points: List<Offset>): Path {
-    val path = Path()
-    if (points.isEmpty()) return path
-    path.moveTo(points[0].x, points[0].y)
-    if (points.size == 1) return path
-    
-    if (points.size == 2) {
-        path.lineTo(points[1].x, points[1].y)
-        return path
-    }
-
-    // Use quadratic Bézier curves for a smooth, human-like flow
-    for (i in 1 until points.size - 1) {
-        val midX = (points[i].x + points[i+1].x) / 2f
-        val midY = (points[i].y + points[i+1].y) / 2f
-        // The current point acts as the control point, pulling the curve smoothly
-        path.quadraticBezierTo(points[i].x, points[i].y, midX, midY)
-    }
-    // Connect to the very last point
-    path.lineTo(points.last().x, points.last().y)
-    return path
-}
+private data class PreparedStroke(
+    val svgPath: Path,
+    val medianMeasure: AndroidPathMeasure,
+    val length: Float
+)
 
 @Composable
 fun AnimationCanvas(
     medians: List<List<List<Double>>>,
+    strokes: List<String>,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = false,
@@ -58,16 +38,46 @@ fun AnimationCanvas(
 ) {
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
+    val scale = canvasSizePx / HanziTransform.GRID_WIDTH
+
+    // Reusable Android paths for clipping to avoid constant allocation
+    val partialMedian = remember { AndroidPath() }
+    val thickClip = remember { AndroidPath() }
     
-    // Precompute each stroke's smoothed path + measure ONCE
-    val prepared = remember(medians, canvasSizePx) {
-        val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-        medians.map { pts ->
-            val canvasPts = pts.map { HanziTransform.toCanvas(it, scale) }
-            val path = createSmoothPath(canvasPts)
-            val m = PathMeasure()
-            m.setPath(path, false)
-            PreparedStroke(m, m.length)
+    // Create a thick "brush" paint to use as a mask
+    val maskPaint = remember(scale) {
+        Paint().apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            // Make it thick enough to fully cover the SVG stroke shape
+            strokeWidth = scale * 150f 
+        }
+    }
+
+    // Precompute SVG paths and Median measures ONCE
+    val prepared = remember(strokes, medians, canvasSizePx) {
+        val safeMedians = medians.take(strokes.size)
+        strokes.mapIndexedNotNull { index, svg ->
+            try {
+                // 1. Parse the beautiful SVG template shape
+                val androidSvgPath = PathParser.createPathFromPathData(svg)
+                androidSvgPath.transform(HanziTransform.matrix(scale))
+                val composeSvgPath = androidSvgPath.asComposePath()
+                
+                // 2. Parse the median (centerline) for animation timing
+                val pts = safeMedians.getOrElse(index) { emptyList() }
+                val androidMedianPath = AndroidPath()
+                pts.forEachIndexed { i, pt ->
+                    val cp = HanziTransform.toCanvas(pt, scale)
+                    if (i == 0) androidMedianPath.moveTo(cp.x, cp.y) else androidMedianPath.lineTo(cp.x, cp.y)
+                }
+                
+                val measure = AndroidPathMeasure(androidMedianPath, false)
+                PreparedStroke(composeSvgPath, measure, measure.length)
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 
@@ -86,11 +96,8 @@ fun AnimationCanvas(
                     val lengthFactor = prepared[i].length / (canvasSizePx * 0.4f) 
                     val duration = (baseDuration + lengthFactor * 250).toInt().coerceIn(350, 900)
                     
-                    // FastOutSlowInEasing mimics the acceleration and deceleration of a brush/pen
                     progress.animateTo(1f, tween(durationMillis = duration, easing = FastOutSlowInEasing))
-                    
-                    // "Pen lift" delay before the next stroke begins
-                    delay(150) 
+                    delay(150) // Pen lift delay
                 }
                 if (!loop) { onComplete(); break }
                 delay(600) // Pause before looping
@@ -99,24 +106,30 @@ fun AnimationCanvas(
     }
 
     val strokeColor = MaterialTheme.colorScheme.primary
-    // Slightly thicker stroke to look more like a brush/marker rather than a digital wire
-    val strokeWidth = canvasSizePx * 0.09f 
 
     Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
-        // Draw completed strokes
+        // 1. Draw completed strokes (fully filled SVG shapes)
         for (i in 0 until currentStroke) {
-            if (i < prepared.size) {
-                val full = Path()
-                prepared[i].measure.getSegment(0f, prepared[i].length, full, true)
-                drawPath(full, strokeColor, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
-            }
+            drawPath(prepared[i].svgPath, strokeColor, style = Fill)
         }
-        // Draw current animating stroke
+        
+        // 2. Draw current animating stroke
         if (currentStroke < prepared.size) {
             val p = prepared[currentStroke]
-            val seg = Path()
-            p.measure.getSegment(0f, p.length * progress.value, seg, true)
-            drawPath(seg, strokeColor, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            
+            // Get the segment of the median that corresponds to current progress
+            partialMedian.reset()
+            p.medianMeasure.getSegment(0f, p.length * progress.value, partialMedian, true)
+            
+            // Convert the partial median line into a thick filled path to use as a clip mask
+            thickClip.reset()
+            maskPaint.getFillPath(partialMedian, thickClip)
+            val composeClip = thickClip.asComposePath()
+            
+            // Reveal the beautiful SVG template shape through the moving mask
+            clipPath(composeClip) {
+                drawPath(p.svgPath, strokeColor, style = Fill)
+            }
         }
     }
 }
