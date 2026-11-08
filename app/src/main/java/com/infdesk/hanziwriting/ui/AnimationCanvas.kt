@@ -23,7 +23,7 @@ private data class PreparedStroke(val measure: PathMeasure, val length: Float)
 
 /**
  * Converts a sequence of points into a smooth path using Quadratic Bézier curves.
- * This eliminates the jagged "robot" lines and mimics the natural flow of a human hand.
+ * This eliminates jagged "robot" lines and mimics the natural flow of a human hand.
  */
 private fun createSmoothPath(points: List<Offset>): Path {
     val path = Path()
@@ -41,7 +41,7 @@ private fun createSmoothPath(points: List<Offset>): Path {
         val midX = (points[i].x + points[i+1].x) / 2f
         val midY = (points[i].y + points[i+1].y) / 2f
         // The current point acts as the control point, pulling the curve smoothly
-        path.quadraticTo(points[i].x, points[i].y, midX, midY)
+        path.quadraticBezierTo(points[i].x, points[i].y, midX, midY)
     }
     // Connect to the very last point
     path.lineTo(points.last().x, points.last().y)
