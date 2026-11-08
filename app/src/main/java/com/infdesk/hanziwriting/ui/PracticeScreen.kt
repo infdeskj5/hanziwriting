@@ -119,9 +119,10 @@ fun PracticeScreen(
             val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
             val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                options.forEach { comp ->
+                // FIX: Changed to forEachIndexed to pass both the Int index and the String component
+                options.forEachIndexed { index, comp ->
                     Button(
-                        onClick = { viewModel.selectComponent(comp) },
+                        onClick = { viewModel.selectComponent(index, comp) },
                         enabled = !viewModel.selectedComponents.contains(comp)
                     ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
                 }
