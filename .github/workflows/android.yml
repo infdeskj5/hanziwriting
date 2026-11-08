@@ -2,10 +2,6 @@ name: Android Release
 on:
   workflow_dispatch:
     inputs:
-      tag_name:
-        description: "Release tag"
-        required: true
-        default: "v1.0.0"
       release_name:
         description: "Release title, optional"
         required: false
@@ -35,6 +31,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Generate Automatic Tag Name
+        run: |
+          AUTO_TAG="v$(date -u +'%Y.%m.%d-%H%M%S')"
+          echo "TAG_NAME=$AUTO_TAG" >> "$GITHUB_ENV"
+
       - name: Download graphics.txt
         run: |
           mkdir -p app/src/main/assets
@@ -55,7 +56,7 @@ jobs:
 
       - name: Prepare release asset
         env:
-          INPUT_TAG: ${{ inputs.tag_name }}
+          INPUT_TAG: ${{ env.TAG_NAME }}
           INPUT_RELEASE_NAME: ${{ inputs.release_name }}
         run: |
           SAFE_TAG=$(echo "$INPUT_TAG" | tr ' /' '--')
@@ -71,7 +72,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name }}
+          tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_NAME }}
           body: ${{ inputs.body }}
           draft: ${{ inputs.draft }}
