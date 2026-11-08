@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,10 +19,7 @@ import com.infdesk.hanziwriting.utils.PinyinUtils
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PracticeScreen(
-    wordToPractice: String? = null,
-    onBackClick: () -> Unit = {}
-) {
+fun PracticeScreen(wordToPractice: String? = null, onBackClick: () -> Unit = {}) {
     BackHandler(enabled = true) { onBackClick() }
 
     val context = LocalContext.current
@@ -35,107 +33,149 @@ fun PracticeScreen(
     val phase = viewModel.currentGlobalPhase
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Top bar
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBackClick) { Icon(Icons.Default.Close, contentDescription = "Exit practice") }
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
             Text(
                 "Phase ${viewModel.currentGlobalPhaseIndex + 1}/5 - Char ${viewModel.currentCharIndex + 1}/${viewModel.characters.size}",
-                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
             )
-            Spacer(modifier = Modifier.weight(1f))
-            Spacer(modifier = Modifier.width(48.dp))
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(48.dp))
         }
 
         if (currentChar == null || currentChar.charData == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            return
-        }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            val data = currentChar.charData!!
 
-        val data = currentChar.charData!!
-
-        // TOP BLOCK
-        Box(modifier = Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            when (phase) {
-                PracticePhase.ANIMATION -> {
-                    // Looping animation plays WHILE you practice
-                    AnimationCanvas(
+            // TOP BLOCK
+            Box(Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when (phase) {
+                    PracticePhase.ANIMATION -> AnimationCanvas(
                         medians = currentChar.medians,
+                        strokes = currentChar.strokes,
                         modifier = Modifier.size(100.dp),
                         autoPlay = true,
                         loop = true,
                         onComplete = {}
                     )
-                }
-                PracticePhase.TRACE_WITH_TEMPLATE -> {
-                    Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
-                }
-                PracticePhase.STRUCTURE_QUIZ -> {
-                    Text("Select components in writing order", style = MaterialTheme.typography.titleMedium)
-                }
-                PracticePhase.TRACE_BLIND_TEMPLATE -> {
-                    Text("Draw with template", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                PracticePhase.MEMORY_DRAW -> {
-                    Text("Draw from memory", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // DEFINITION (scrollable, capped height)
-        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
-                Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // MIDDLE AREA: structure view (quiz) OR drawing canvas
-        if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                StructureView(
-                    root = currentChar.idsRoot,
-                    leafRank = currentChar.leafRank,
-                    selectedCount = viewModel.selectedComponents.size,
-                    modifier = Modifier.size(220.dp)
-                )
-            }
-        } else {
-            val showTemplate = phase == PracticePhase.ANIMATION ||
-                               phase == PracticePhase.TRACE_WITH_TEMPLATE ||
-                               phase == PracticePhase.TRACE_BLIND_TEMPLATE
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                HanziCanvas(viewModel = viewModel, showTemplate = showTemplate, modifier = Modifier.size(300.dp))
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // BOTTOM CONTROLS
-        if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            val correctComponents = currentChar.orderedComponents.map { it.char.toString() }
-            val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
-            val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
-
-            FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                options.forEach { comp ->
-                    Button(
-                        onClick = { viewModel.selectComponent(comp) },
-                        enabled = !viewModel.selectedComponents.contains(comp)
-                    ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
+                    PracticePhase.TRACE_WITH_TEMPLATE -> Text(
+                        data.character,
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    PracticePhase.STRUCTURE_QUIZ -> Text(
+                        "Select components in writing order",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    PracticePhase.TRACE_BLIND_TEMPLATE -> Text(
+                        "Draw with template",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    PracticePhase.MEMORY_DRAW -> Text(
+                        "Draw from memory",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
-        } else {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text("Stroke: ${minOf(viewModel.currentStrokeIndex + 1, currentChar.medians.size)}/${currentChar.medians.size}", style = MaterialTheme.typography.bodyLarge)
-                    Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(8.dp))
+
+            // DEFINITION (scrollable, shows BOTH dictionaries)
+            Box(Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
+                    if (data.definition.isNotBlank()) {
+                        Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                    }
+                    if (data.mmaDefinition.isNotBlank() && data.mmaDefinition != data.definition) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            data.mmaDefinition,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-                if (viewModel.isAllComplete) {
-                    Button(onClick = onBackClick) { Text("Finish!") }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            // MIDDLE: structure view (quiz) OR drawing canvas
+            if (phase == PracticePhase.STRUCTURE_QUIZ) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    StructureView(
+                        root = currentChar.idsRoot,
+                        leafRank = currentChar.leafRank,
+                        selectedCount = viewModel.selectedComponents.size,
+                        modifier = Modifier.size(220.dp)
+                    )
+                }
+            } else {
+                val showTemplate = phase == PracticePhase.ANIMATION ||
+                        phase == PracticePhase.TRACE_WITH_TEMPLATE ||
+                        phase == PracticePhase.TRACE_BLIND_TEMPLATE
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    HanziCanvas(viewModel = viewModel, showTemplate = showTemplate, modifier = Modifier.size(300.dp))
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            // BOTTOM CONTROLS
+            if (phase == PracticePhase.STRUCTURE_QUIZ && !viewModel.waitingForNext && !viewModel.isAllComplete) {
+                val options = remember(currentChar) {
+                    val correct = currentChar.orderedComponents.map { it.char.toString() }
+                    val pool = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心", "土", "亻", "宀", "厂", "广")
+                    val distractors = pool.filter { it !in correct }.shuffled().take(4)
+                    (correct + distractors).shuffled().mapIndexed { idx, c -> idx to c }
+                }
+                FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    options.forEach { (id, comp) ->
+                        Button(
+                            onClick = { viewModel.selectComponent(id, comp) },
+                            enabled = !viewModel.usedOptionIds.contains(id)
+                        ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
+                    }
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        if (phase == PracticePhase.STRUCTURE_QUIZ) {
+                            Text(
+                                "Components: ${viewModel.selectedComponents.size}/${currentChar.orderedComponents.size}",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        } else {
+                            Text(
+                                "Stroke: ${minOf(viewModel.currentStrokeIndex + 1, currentChar.medians.size)}/${currentChar.medians.size}",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                        Text(
+                            "Errors: ${viewModel.totalErrors}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                    when {
+                        viewModel.waitingForNext -> Button(
+                            onClick = { viewModel.proceedNext() },
+                            contentPadding = PaddingValues(16.dp)
+                        ) {
+                            Icon(Icons.Default.ArrowForward, contentDescription = "Next", modifier = Modifier.size(28.dp))
+                        }
+                        viewModel.isAllComplete -> Button(onClick = onBackClick) { Text("Finish!") }
+                    }
                 }
             }
         }

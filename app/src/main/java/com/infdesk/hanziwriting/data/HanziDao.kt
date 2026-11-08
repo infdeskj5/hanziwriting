@@ -16,8 +16,12 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
-    @Query("UPDATE hanzi_characters SET radical = :radical, decomposition = :decomposition, matchesJson = :matchesJson WHERE character = :character")
-    suspend fun updateRadicalAndDecomp(character: String, radical: String, decomposition: String, matchesJson: String)
+    // Inserts ONLY if the character is missing (keeps CC-CEDICT row when present)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCharacter(character: HanziCharacter)
+
+    @Query("UPDATE hanzi_characters SET radical = :radical, decomposition = :decomposition, matchesJson = :matchesJson, mmaDefinition = :mmaDefinition WHERE character = :character")
+    suspend fun updateRadicalAndDecomp(character: String, radical: String, decomposition: String, matchesJson: String, mmaDefinition: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCharacters(characters: List<HanziCharacter>)

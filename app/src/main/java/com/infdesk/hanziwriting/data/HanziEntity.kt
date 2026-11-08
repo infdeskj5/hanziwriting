@@ -7,10 +7,11 @@ import androidx.room.PrimaryKey
 data class HanziCharacter(
     @PrimaryKey val character: String,
     val pinyin: String,
-    val definition: String,
+    val definition: String,          // CC-CEDICT definition
     val radical: String = "",
     val decomposition: String = "",
-    val matchesJson: String = "" // Stores the JSON array of paths
+    val matchesJson: String = "",
+    val mmaDefinition: String = ""   // makemeahanzi dictionary.txt definition
 )
 
 @Entity(tableName = "hanzi_graphics")

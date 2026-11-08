@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 object DatabaseInitializer {
     private const val PREFS_NAME = "hanzi_init"
     private const val KEY_INIT_VERSION = "init_version"
-    private const val CURRENT_INIT_VERSION = 3 
+    private const val CURRENT_INIT_VERSION = 4
 
     suspend fun initializeIfNeeded(context: Context, database: AppDatabase) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

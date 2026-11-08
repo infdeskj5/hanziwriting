@@ -46,45 +46,37 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     val characters = mutableStateListOf<CharacterProgress>()
 
     val allPossiblePhases = listOf(
-        PracticePhase.ANIMATION,
-        PracticePhase.TRACE_WITH_TEMPLATE,
-        PracticePhase.STRUCTURE_QUIZ,
-        PracticePhase.TRACE_BLIND_TEMPLATE,
-        PracticePhase.MEMORY_DRAW
+        PracticePhase.ANIMATION, PracticePhase.TRACE_WITH_TEMPLATE,
+        PracticePhase.STRUCTURE_QUIZ, PracticePhase.TRACE_BLIND_TEMPLATE, PracticePhase.MEMORY_DRAW
     )
 
-    var currentGlobalPhaseIndex by mutableIntStateOf(0)
-        private set
-    var currentCharIndex by mutableIntStateOf(0)
-        private set
-
+    var currentGlobalPhaseIndex by mutableIntStateOf(0); private set
+    var currentCharIndex by mutableIntStateOf(0); private set
     val currentGlobalPhase: PracticePhase get() = allPossiblePhases[currentGlobalPhaseIndex]
     val currentChar: CharacterProgress? get() = characters.getOrNull(currentCharIndex)
 
-    var isAllComplete by mutableStateOf(false)
-        private set
+    var isAllComplete by mutableStateOf(false); private set
+    var waitingForNext by mutableStateOf(false); private set
 
-    var currentStrokeIndex by mutableIntStateOf(0)
-        private set
-    var totalErrors by mutableIntStateOf(0)
-        private set
+    var currentStrokeIndex by mutableIntStateOf(0); private set
+    var totalErrors by mutableIntStateOf(0); private set
 
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
+    val usedOptionIds = mutableStateListOf<Int>()
 
     private val gson = Gson()
 
     fun loadCharacters(input: String) {
         characters.clear()
-        input.forEach { char -> characters.add(CharacterProgress(character = char.toString())) }
+        input.forEach { characters.add(CharacterProgress(character = it.toString())) }
         if (characters.isEmpty()) return
 
         viewModelScope.launch {
             characters.forEachIndexed { index, cp ->
                 val charData = database.hanziDao().getCharacterExact(cp.character)
                 val graphicsData = database.hanziDao().getGraphics(cp.character)
-
                 if (charData != null && graphicsData != null) {
                     val type = object : TypeToken<Map<String, Any>>() {}.type
                     val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
@@ -93,7 +85,7 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     @Suppress("UNCHECKED_CAST")
                     val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
 
-                    // Parse IDS tree + writing order from matches
+                    // Simple (non-recursive) IDS decomposition
                     val idsRoot = IdsParser.parse(charData.decomposition)
                     val leaves = IdsParser.getLeavesWithIndex(idsRoot)
                     val orderedComponents = mutableListOf<ComponentInfo>()
@@ -125,29 +117,40 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                     }
 
                     characters[index] = cp.copy(
-                        charData = charData,
-                        medians = medians,
-                        strokes = strokes,
+                        charData = charData, medians = medians, strokes = strokes,
                         orderedComponents = orderedComponents,
-                        idsRoot = idsRoot,
-                        leafRank = leafRank
+                        idsRoot = idsRoot, leafRank = leafRank
                     )
                 }
             }
             while (currentCharIndex < characters.size &&
-                !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
-                currentCharIndex++
-            }
+                !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) currentCharIndex++
         }
     }
 
-    fun onPhaseComplete() {
+    fun onPhaseTaskComplete() {
+        if (isAbsoluteLastStep()) {
+            isAllComplete = true
+            ProgressStore.incrementSuccess(characters.first().character)
+        } else {
+            waitingForNext = true
+        }
+    }
+
+    fun proceedNext() {
+        waitingForNext = false
+        advancePhase()
+    }
+
+    private fun isAbsoluteLastStep(): Boolean =
+        currentGlobalPhaseIndex == allPossiblePhases.lastIndex && currentCharIndex == characters.lastIndex
+
+    private fun advancePhase() {
         var nextIndex = currentCharIndex + 1
         while (nextIndex < characters.size) {
             if (characters[nextIndex].getPhases().contains(currentGlobalPhase)) break
             nextIndex++
         }
-
         if (nextIndex < characters.size) {
             currentCharIndex = nextIndex
         } else {
@@ -155,10 +158,8 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                 currentGlobalPhaseIndex++
                 currentCharIndex = 0
                 while (currentCharIndex < characters.size &&
-                    !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) {
-                    currentCharIndex++
-                }
-                if (currentCharIndex >= characters.size) onPhaseComplete()
+                    !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) currentCharIndex++
+                if (currentCharIndex >= characters.size) advancePhase()
             } else {
                 isAllComplete = true
                 ProgressStore.incrementSuccess(characters.first().character)
@@ -167,17 +168,19 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         resetStrokeState()
     }
 
-    // Validates that the user picks the correct NEXT component in writing order
-    fun selectComponent(component: String) {
-        val cp = currentChar ?: return
+    fun selectComponent(optionId: Int, component: String): Boolean {
+        val cp = currentChar ?: return false
         val expectedIndex = selectedComponents.size
-        if (expectedIndex >= cp.orderedComponents.size) return
-        val expectedChar = cp.orderedComponents[expectedIndex].char.toString()
-        if (component == expectedChar) {
+        if (expectedIndex >= cp.orderedComponents.size) return false
+        if (usedOptionIds.contains(optionId)) return false
+        return if (component == cp.orderedComponents[expectedIndex].char.toString()) {
             selectedComponents.add(component)
-            if (selectedComponents.size == cp.orderedComponents.size) onPhaseComplete()
+            usedOptionIds.add(optionId)
+            if (selectedComponents.size == cp.orderedComponents.size) onPhaseTaskComplete()
+            true
         } else {
             totalErrors++
+            false
         }
     }
 
@@ -186,21 +189,14 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
     fun finishStroke(canvasSize: Float) {
         val cp = currentChar ?: return
         if (currentStrokeIndex >= cp.medians.size) return
-
         val scale = canvasSize / HanziTransform.GRID_WIDTH
-        val expectedCanvasPoints = cp.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
-
-        val isCorrect = StrokeEvaluator.evaluateStroke(
-            userPoints = currentStrokePoints.toList(),
-            expectedPoints = expectedCanvasPoints,
-            canvasSize = canvasSize
-        )
-
+        val expected = cp.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
+        val isCorrect = StrokeEvaluator.evaluateStroke(currentStrokePoints.toList(), expected, canvasSize)
         if (isCorrect) {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-            if (currentStrokeIndex >= cp.medians.size) onPhaseComplete()
+            if (currentStrokeIndex >= cp.medians.size) onPhaseTaskComplete()
         } else {
             totalErrors++
             currentStrokePoints.clear()
@@ -213,5 +209,6 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         currentStrokePoints.clear()
         completedStrokes.clear()
         selectedComponents.clear()
+        usedOptionIds.clear()
     }
 }

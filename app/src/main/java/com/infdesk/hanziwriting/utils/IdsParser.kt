@@ -49,7 +49,7 @@ object IdsParser {
         if (node == null) return -1
         var current = node
         for (i in path) {
-            if (current is IdsNode.Branch && i < current.children.size) current = current.children[i]
+            if (current is IdsNode.Branch && i >= 0 && i < current.children.size) current = current.children[i]
             else return -1
         }
         return if (current is IdsNode.Leaf) current.index else -1
