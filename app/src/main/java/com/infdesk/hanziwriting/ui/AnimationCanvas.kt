@@ -1,72 +1,56 @@
 package com.infdesk.hanziwriting.ui
 
-import android.graphics.Paint as AndroidPaint
-import android.graphics.Path as AndroidPath
-import android.graphics.PathMeasure as AndroidPathMeasure
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathOperation
-import androidx.compose.ui.graphics.asComposePath
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.core.graphics.PathParser
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
+import kotlin.math.sin
 
-private data class PreparedStroke(
-    val svgPath: Path,
-    val medianAndroid: AndroidPath,
-    val medianLength: Float
-)
-
-// Fraction of the stroke during which the brush "presses down" (width ramps 0 -> full).
-private const val BRUSH_PRESS_FRACTION = 0.15f
+private data class PreparedStroke(val measure: PathMeasure, val length: Float)
 
 @Composable
 fun AnimationCanvas(
     medians: List<List<List<Double>>>,
-    strokes: List<String>,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = false,
     onComplete: () -> Unit = {}
 ) {
-    var sizePx by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val canvasSizePx = with(density) { 100.dp.toPx() }
 
-    val prepared = remember(strokes, medians, sizePx) {
-        if (sizePx <= 0f || strokes.isEmpty()) emptyList() else {
-            val scale = sizePx / HanziTransform.GRID_WIDTH
-            strokes.mapIndexedNotNull { i, svg ->
-                try {
-                    val androidSvg = PathParser.createPathFromPathData(svg).apply {
-                        transform(HanziTransform.matrix(scale))
-                    }
-                    val svgPath = androidSvg.asComposePath()
-
-                    val medianAndroid = AndroidPath()
-                    val pts = medians.getOrNull(i) ?: emptyList()
-                    pts.forEachIndexed { idx, pt ->
-                        val cp = HanziTransform.toCanvas(pt, scale)
-                        if (idx == 0) medianAndroid.moveTo(cp.x, cp.y) else medianAndroid.lineTo(cp.x, cp.y)
-                    }
-                    val pm = AndroidPathMeasure()
-                    pm.setPath(medianAndroid, false)
-
-                    PreparedStroke(svgPath, medianAndroid, pm.length)
-                } catch (e: Exception) { null }
+    val prepared = remember(medians, canvasSizePx) {
+        val scale = canvasSizePx / HanziTransform.GRID_WIDTH
+        medians.map { pts ->
+            val path = Path()
+            pts.forEachIndexed { i, pt ->
+                val cp = HanziTransform.toCanvas(pt, scale)
+                if (i == 0) path.moveTo(cp.x, cp.y) else path.lineTo(cp.x, cp.y)
             }
+            val m = PathMeasure()
+            m.setPath(path, false)
+            PreparedStroke(m, m.length)
         }
     }
 
     val progress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
+
+    // Human-like acceleration and deceleration curve (EaseInOutCubic equivalent)
+    val humanEasing = remember { CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f) }
 
     LaunchedEffect(prepared, autoPlay, loop) {
         if (autoPlay && prepared.isNotEmpty()) {
@@ -75,69 +59,57 @@ fun AnimationCanvas(
                     currentStroke = i
                     progress.snapTo(0f)
                     
-                    // ORIGINAL SPEED restored: exactly 400ms per stroke, constant speed (LinearEasing)
+                    // Dynamic duration based on stroke length so longer strokes take proportionally more time
+                    val strokeLength = prepared[i].length
+                    val duration = (350 + (strokeLength * 0.3f)).toInt().coerceIn(300, 700)
+
                     progress.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = 650, easing = LinearEasing)
+                        animationSpec = tween(durationMillis = duration, easing = humanEasing)
                     )
-                    delay(150L) // Original pause between strokes
+                    delay(80)
                 }
                 if (!loop) { onComplete(); break }
-                delay(1000L) // Pause before looping
+                delay(400)
             }
         }
     }
 
     val strokeColor = MaterialTheme.colorScheme.primary
-    val ghostColor = strokeColor.copy(alpha = 0.12f)
-    val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+    val baseStrokeWidth = canvasSizePx * 0.08f
 
-    val brushPaint = remember {
-        AndroidPaint().apply {
-            style = AndroidPaint.Style.STROKE
-            strokeCap = AndroidPaint.Cap.ROUND
-            strokeJoin = AndroidPaint.Join.ROUND
+    Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+        // Draw completed strokes cleanly
+        for (i in 0 until currentStroke) {
+            if (i < prepared.size) {
+                val full = Path()
+                prepared[i].measure.getSegment(0f, prepared[i].length, full, true)
+                drawPath(full, strokeColor, style = Stroke(width = baseStrokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
         }
-    }
-    val segPath = remember { AndroidPath() }
-    val tubePath = remember { AndroidPath() }
-    val pm = remember { AndroidPathMeasure() }
 
-    Box(
-        modifier = modifier
-            .onSizeChanged { sizePx = it.width.toFloat() }
-            .background(surfaceColor)
-    ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            for (i in prepared.indices) {
-                val st = prepared[i]
-                when {
-                    i < currentStroke -> drawPath(st.svgPath, strokeColor)
+        // Draw the active stroke with dynamic pressure/speed simulation
+        if (currentStroke < prepared.size) {
+            val p = prepared[currentStroke]
+            val currentLen = p.length * progress.value
+            
+            if (currentLen > 0f) {
+                val seg = Path()
+                p.measure.getSegment(0f, currentLen, seg, true)
 
-                    i == currentStroke -> {
-                        drawPath(st.svgPath, ghostColor)
+                // Simulate subtle human width tapering (thinner at the absolute entry/exit points)
+                val pressureFactor = (sin(progress.value * Math.PI)).toFloat()
+                val dynamicWidth = baseStrokeWidth * (0.8f + (0.2f * pressureFactor))
 
-                        val p = progress.value
-                        pm.setPath(st.medianAndroid, false)
-                        segPath.reset()
-                        pm.getSegment(0f, st.medianLength * p, segPath, true)
-                        tubePath.reset()
-
-                        // Brush width ramps from 0 during the first 15% of the stroke
-                        val widthFactor = (p / BRUSH_PRESS_FRACTION).coerceIn(0f, 1f)
-                        if (widthFactor > 0f && segPath.isEmpty == false) {
-                            brushPaint.strokeWidth = size.width * 0.35f * widthFactor
-                            brushPaint.getFillPath(segPath, tubePath)
-
-                            val revealed = Path.combine(
-                                PathOperation.Intersect,
-                                st.svgPath,
-                                tubePath.asComposePath()
-                            )
-                            drawPath(revealed, strokeColor)
-                        }
-                    }
-                }
+                drawPath(
+                    seg, 
+                    strokeColor, 
+                    style = Stroke(
+                        width = dynamicWidth, 
+                        cap = StrokeCap.Round, 
+                        join = StrokeJoin.Round
+                    )
+                )
             }
         }
     }
