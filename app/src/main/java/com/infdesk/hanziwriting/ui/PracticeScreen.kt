@@ -59,6 +59,7 @@ fun PracticeScreen(
                     // Looping animation plays WHILE you practice
                     AnimationCanvas(
                         medians = currentChar.medians,
+                        strokes = currentChar.strokes,
                         modifier = Modifier.size(100.dp),
                         autoPlay = true,
                         loop = true,
@@ -119,10 +120,12 @@ fun PracticeScreen(
             val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
             val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // FIX: Changed to forEachIndexed to pass both the Int index and the String component
-                options.forEachIndexed { index, comp ->
+                options.forEach { comp ->
+                    // FIX: We must pass the ORIGINAL index from correctComponents, not the shuffled index, 
+                    // so the ViewModel knows the correct stroke order was selected.
+                    val originalIndex = correctComponents.indexOf(comp)
                     Button(
-                        onClick = { viewModel.selectComponent(index, comp) },
+                        onClick = { viewModel.selectComponent(originalIndex, comp) },
                         enabled = !viewModel.selectedComponents.contains(comp)
                     ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
                 }
