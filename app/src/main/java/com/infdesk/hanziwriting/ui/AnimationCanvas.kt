@@ -23,7 +23,8 @@ private data class PreparedStroke(val measure: PathMeasure, val length: Float)
 
 @Composable
 fun AnimationCanvas(
-    medians: List<List<List<Double>>>,
+    medians: List<List<List<Double>>> = emptyList(),
+    strokes: List<List<List<Double>>> = medians, // Supports whichever parameter name the caller uses!
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = false,
@@ -32,9 +33,12 @@ fun AnimationCanvas(
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
 
-    val prepared = remember(medians, canvasSizePx) {
+    // Use whichever list was provided
+    val targetData = if (strokes.isNotEmpty()) strokes else medians
+
+    val prepared = remember(targetData, canvasSizePx) {
         val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-        medians.map { pts ->
+        targetData.map { pts ->
             val path = Path()
             pts.forEachIndexed { i, pt ->
                 val cp = HanziTransform.toCanvas(pt, scale)
@@ -49,6 +53,7 @@ fun AnimationCanvas(
     val progress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
 
+    // Human-like acceleration and deceleration curve
     val humanEasing = remember { CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f) }
 
     LaunchedEffect(prepared, autoPlay, loop) {
@@ -93,6 +98,7 @@ fun AnimationCanvas(
                 val seg = Path()
                 p.measure.getSegment(0f, currentLen, seg, true)
 
+                // Simulate subtle human width tapering/pressure
                 val pressureFactor = (sin(progress.value * Math.PI)).toFloat()
                 val dynamicWidth = baseStrokeWidth * (0.8f + (0.2f * pressureFactor))
 
