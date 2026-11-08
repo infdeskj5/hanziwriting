@@ -23,7 +23,7 @@ private data class PreparedStroke(val measure: PathMeasure, val length: Float)
 
 @Composable
 fun AnimationCanvas(
-    medians: List<List<List<Double>>>,
+    strokes: List<List<List<Double>>>,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = false,
@@ -32,9 +32,9 @@ fun AnimationCanvas(
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
 
-    val prepared = remember(medians, canvasSizePx) {
+    val prepared = remember(strokes, canvasSizePx) {
         val scale = canvasSizePx / HanziTransform.GRID_WIDTH
-        medians.map { pts ->
+        strokes.map { pts ->
             val path = Path()
             pts.forEachIndexed { i, pt ->
                 val cp = HanziTransform.toCanvas(pt, scale)
