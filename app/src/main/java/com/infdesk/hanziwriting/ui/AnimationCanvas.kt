@@ -49,7 +49,6 @@ fun AnimationCanvas(
     val progress = remember { Animatable(0f) }
     var currentStroke by remember { mutableIntStateOf(0) }
 
-    // Human-like acceleration and deceleration curve (EaseInOutCubic equivalent)
     val humanEasing = remember { CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f) }
 
     LaunchedEffect(prepared, autoPlay, loop) {
@@ -59,7 +58,6 @@ fun AnimationCanvas(
                     currentStroke = i
                     progress.snapTo(0f)
                     
-                    // Dynamic duration based on stroke length so longer strokes take proportionally more time
                     val strokeLength = prepared[i].length
                     val duration = (350 + (strokeLength * 0.3f)).toInt().coerceIn(300, 700)
 
@@ -79,7 +77,6 @@ fun AnimationCanvas(
     val baseStrokeWidth = canvasSizePx * 0.08f
 
     Canvas(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
-        // Draw completed strokes cleanly
         for (i in 0 until currentStroke) {
             if (i < prepared.size) {
                 val full = Path()
@@ -88,7 +85,6 @@ fun AnimationCanvas(
             }
         }
 
-        // Draw the active stroke with dynamic pressure/speed simulation
         if (currentStroke < prepared.size) {
             val p = prepared[currentStroke]
             val currentLen = p.length * progress.value
@@ -97,7 +93,6 @@ fun AnimationCanvas(
                 val seg = Path()
                 p.measure.getSegment(0f, currentLen, seg, true)
 
-                // Simulate subtle human width tapering (thinner at the absolute entry/exit points)
                 val pressureFactor = (sin(progress.value * Math.PI)).toFloat()
                 val dynamicWidth = baseStrokeWidth * (0.8f + (0.2f * pressureFactor))
 
