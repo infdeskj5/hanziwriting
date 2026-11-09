@@ -34,7 +34,6 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.max
-import kotlin.math.PI
 import kotlin.math.sqrt
 
 private data class KeyFrame(
@@ -50,7 +49,6 @@ private data class PreparedStroke(
     val points: List<Offset>,
     val cumulative: FloatArray,
     val cornerBoost: FloatArray,
-    val cornerDelay: FloatArray,
     val keyFrames: List<KeyFrame>,
     val maskWidth: Float,
     val startX: Float,
@@ -58,8 +56,16 @@ private data class PreparedStroke(
     val isDot: Boolean
 )
 
-private fun len(dx: Float, dy: Float): Float {
-    return sqrt(dx * dx + dy * dy)
+private fun dist(dx: Float, dy: Float): Float = sqrt(dx * dx + dy * dy)
+
+private fun AndroidPath.addUnion(other: AndroidPath) {
+    try {
+        if (!op(other, AndroidPath.Op.UNION)) {
+            addPath(other)
+        }
+    } catch (_: Throwable) {
+        addPath(other)
+    }
 }
 
 private fun buildAndroidPath(points: List<Offset>): AndroidPath {
@@ -89,7 +95,7 @@ private fun buildCumulative(points: List<Offset>): FloatArray {
     for (i in 1 until points.size) {
         val dx = points[i].x - points[i - 1].x
         val dy = points[i].y - points[i - 1].y
-        cumulative[i] = cumulative[i - 1] + len(dx, dy)
+        cumulative[i] = cumulative[i - 1] + dist(dx, dy)
     }
     return cumulative
 }
@@ -102,8 +108,8 @@ private fun angleAt(points: List<Offset>, index: Int): Float {
     val dx2 = points[index + 1].x - points[index].x
     val dy2 = points[index + 1].y - points[index].y
 
-    val l1 = len(dx1, dy1)
-    val l2 = len(dx2, dy2)
+    val l1 = dist(dx1, dy1)
+    val l2 = dist(dx2, dy2)
 
     if (l1 < 0.5f || l2 < 0.5f) return 0f
 
@@ -119,7 +125,7 @@ private fun buildCornerBoost(points: List<Offset>, maskWidth: Float): FloatArray
     if (points.isEmpty()) return boost
 
     if (points.size == 1) {
-        boost[0] = maskWidth * 0.95f
+        boost[0] = maskWidth
         return boost
     }
 
@@ -127,27 +133,26 @@ private fun buildCornerBoost(points: List<Offset>, maskWidth: Float): FloatArray
     boost[points.size - 1] = maskWidth * 0.85f
 
     for (i in 1 until points.size - 1) {
-        val turn = angleAt(points, i) / PI.toFloat()
-        boost[i] = maskWidth * (0.58f + turn * 0.75f)
+        val turn = angleAt(points, i) / kotlin.math.PI.toFloat()
+        boost[i] = (maskWidth * (0.58f + turn * 0.85f)).coerceAtMost(maskWidth * 1.65f)
     }
 
     return boost
 }
 
 private fun buildCornerDelay(points: List<Offset>): FloatArray {
-    val delay = FloatArray(points.size)
+    val delays = FloatArray(points.size)
 
     for (i in 1 until points.size - 1) {
-        val turn = angleAt(points, i) / PI.toFloat()
-
-        delay[i] = if (turn > 0.14f) {
-            (turn * 150f).coerceIn(0f, 115f)
+        val turn = angleAt(points, i) / kotlin.math.PI.toFloat()
+        delays[i] = if (turn > 0.12f) {
+            (turn * 150f).coerceIn(0f, 120f)
         } else {
             0f
         }
     }
 
-    return delay
+    return delays
 }
 
 private fun buildKeyFrames(
@@ -168,11 +173,11 @@ private fun buildKeyFrames(
     for (i in 1 until cumulative.size - 1) {
         val fraction = (cumulative[i] / length).coerceIn(0f, 1f)
 
-        if (fraction <= 0.008f || fraction >= 0.992f) continue
+        if (fraction <= 0.01f || fraction >= 0.99f) continue
 
-        val pause = cornerDelay[i].toInt().coerceIn(0, 140)
+        val pause = cornerDelay[i].toInt().coerceIn(0, 130)
 
-        if (fraction - lastFraction < 0.028f) {
+        if (fraction - lastFraction < 0.03f) {
             if (frames.size > 1) {
                 val previous = frames.removeAt(frames.size - 1)
                 frames.add(
@@ -181,15 +186,14 @@ private fun buildKeyFrames(
                         pauseMs = max(previous.pauseMs, pause)
                     )
                 )
-                lastFraction = fraction
             } else {
                 frames.add(KeyFrame(fraction, pause))
-                lastFraction = fraction
             }
         } else {
             frames.add(KeyFrame(fraction, pause))
-            lastFraction = fraction
         }
+
+        lastFraction = fraction
     }
 
     frames.add(KeyFrame(1f, 0))
@@ -202,29 +206,52 @@ private fun estimateMaskWidth(
     canvasSizePx: Float
 ): Float {
     val bounds = RectF()
-    svg?.getBounds(bounds)
+    var hasBounds = false
 
-    if (bounds.isEmpty) {
-        return canvasSizePx * 0.18f
+    if (svg != null) {
+        try {
+            svg.computeBounds(bounds, true)
+            hasBounds = !bounds.isEmpty()
+        } catch (_: Throwable) {
+            hasBounds = false
+        }
+    }
+
+    if (!hasBounds) {
+        if (points.isEmpty()) return canvasSizePx * 0.18f
+
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+
+        for (p in points) {
+            if (p.x < minX) minX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.x > maxX) maxX = p.x
+            if (p.y > maxY) maxY = p.y
+        }
+
+        bounds.set(minX, minY, maxX, maxY)
     }
 
     var dx = 1f
     var dy = 0f
-    var bestSegmentLength = 0f
+    var bestSegment = 0f
 
     for (i in 0 until points.size - 1) {
         val sx = points[i + 1].x - points[i].x
         val sy = points[i + 1].y - points[i].y
-        val segmentLength = len(sx, sy)
+        val segment = dist(sx, sy)
 
-        if (segmentLength > bestSegmentLength) {
-            bestSegmentLength = segmentLength
+        if (segment > bestSegment) {
+            bestSegment = segment
             dx = sx
             dy = sy
         }
     }
 
-    val directionLength = len(dx, dy)
+    val directionLength = dist(dx, dy)
 
     if (directionLength > 0.5f) {
         dx /= directionLength
@@ -237,15 +264,18 @@ private fun estimateMaskWidth(
     val perpX = -dy
     val perpY = dx
 
-    val perpendicularExtent =
-        abs(bounds.width() * perpX) + abs(bounds.height() * perpY)
+    val w = if (bounds.isEmpty()) 0f else bounds.width()
+    val h = if (bounds.isEmpty()) 0f else bounds.height()
 
-    val suggested = perpendicularExtent * 1.9f + canvasSizePx * 0.04f
+    val perpendicularExtent = abs(w * perpX) + abs(h * perpY)
+    val diagonal = dist(w, h)
 
-    return suggested.coerceIn(
-        canvasSizePx * 0.145f,
-        canvasSizePx * 0.32f
+    val suggested = max(
+        perpendicularExtent * 1.85f + canvasSizePx * 0.035f,
+        diagonal * 0.16f + canvasSizePx * 0.08f
     )
+
+    return suggested.coerceIn(canvasSizePx * 0.13f, canvasSizePx * 0.30f)
 }
 
 @Composable
@@ -263,7 +293,7 @@ fun AnimationCanvas(
 
     val prepared = remember(medians, strokes, canvasSizePx) {
         if (medians.isEmpty()) {
-            emptyList()
+            emptyList<PreparedStroke>()
         } else {
             val scale = canvasSizePx / HanziTransform.GRID_WIDTH
             val count = if (strokes.isEmpty()) {
@@ -287,7 +317,7 @@ fun AnimationCanvas(
                         parsed.transform(HanziTransform.matrix(scale))
                         svgAndroid = parsed
                         svgCompose = parsed.asComposePath()
-                    } catch (_: Exception) {
+                    } catch (_: Throwable) {
                         svgAndroid = null
                         svgCompose = null
                     }
@@ -315,7 +345,6 @@ fun AnimationCanvas(
                         points = points,
                         cumulative = cumulative,
                         cornerBoost = cornerBoost,
-                        cornerDelay = cornerDelay,
                         keyFrames = keyFrames,
                         maskWidth = maskWidth,
                         startX = points.first().x,
@@ -330,12 +359,14 @@ fun AnimationCanvas(
     }
 
     val progress = remember { Animatable(0f) }
-
     var activeIndex by remember { mutableIntStateOf(0) }
     var completedCount by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(prepared, autoPlay, loop) {
         if (!autoPlay || prepared.isEmpty()) return@LaunchedEffect
+
+        val startEasing = CubicBezierEasing(0.25f, 0.10f, 0.25f, 1.0f)
+        val endEasing = CubicBezierEasing(0.42f, 0.0f, 0.58f, 1.0f)
 
         while (true) {
             for (i in prepared.indices) {
@@ -350,7 +381,7 @@ fun AnimationCanvas(
                         1f,
                         tween(
                             durationMillis = 260,
-                            easing = CubicBezierEasing(0.18f, 0.80f, 0.30f, 1.0f)
+                            easing = startEasing
                         )
                     )
                 } else {
@@ -363,31 +394,19 @@ fun AnimationCanvas(
                             if (frame.pauseMs > 0) {
                                 delay(frame.pauseMs.toLong())
                             }
-                            previousFraction = targetFraction.coerceAtLeast(previousFraction)
+                            previousFraction = max(previousFraction, targetFraction)
                             continue
                         }
 
                         val segmentLength = (targetFraction - previousFraction) * stroke.length
 
-                        val duration = (
-                            segmentLength / (canvasSizePx * 0.00155f)
-                        ).toInt().coerceIn(45, 430)
+                        val duration = (segmentLength / (canvasSizePx * 0.00155f))
+                            .toInt()
+                            .coerceIn(45, 430)
 
                         val easing = when {
-                            previousFraction == 0f -> CubicBezierEasing(
-                                0.25f,
-                                0.10f,
-                                0.25f,
-                                1.0f
-                            )
-
-                            targetFraction >= 0.998f -> CubicBezierEasing(
-                                0.42f,
-                                0.0f,
-                                0.58f,
-                                1.0f
-                            )
-
+                            previousFraction == 0f -> startEasing
+                            targetFraction >= 0.998f -> endEasing
                             else -> LinearEasing
                         }
 
@@ -407,11 +426,8 @@ fun AnimationCanvas(
                     }
                 }
 
-                // Complete this stroke immediately.
-                // This prevents tiny tips from remaining incomplete during the pause.
                 completedCount = i + 1
-
-                delay(if (stroke.isDot) 80 else 110)
+                delay(if (stroke.isDot) 80L else 110L)
             }
 
             if (!loop) {
@@ -422,8 +438,7 @@ fun AnimationCanvas(
             completedCount = 0
             activeIndex = 0
             progress.snapTo(0f)
-
-            delay(650)
+            delay(650L)
         }
     }
 
@@ -431,7 +446,8 @@ fun AnimationCanvas(
     val strokeFill = remember { AndroidPath() }
     val clipAndroid = remember { AndroidPath() }
     val cap = remember { AndroidPath() }
-    val posTan = remember { AndroidPathMeasure.PosTan() }
+    val pos = remember { FloatArray(2) }
+    val tan = remember { FloatArray(2) }
 
     val maskPaint = remember {
         Paint().apply {
@@ -449,7 +465,6 @@ fun AnimationCanvas(
     Canvas(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        // Soft full-character guide underneath.
         if (showGuide) {
             for (stroke in prepared) {
                 val svg = stroke.svgPath
@@ -470,7 +485,6 @@ fun AnimationCanvas(
             }
         }
 
-        // Fully completed strokes.
         val completed = completedCount.coerceIn(0, prepared.size)
 
         for (i in 0 until completed) {
@@ -492,14 +506,12 @@ fun AnimationCanvas(
             }
         }
 
-        // Currently animating stroke.
         if (activeIndex < prepared.size && completedCount == activeIndex) {
             val stroke = prepared[activeIndex]
             val t = progress.value.coerceIn(0f, 1f)
             val svg = stroke.svgPath
 
             if (svg == null) {
-                // Fallback if SVG data is missing.
                 partial.reset()
 
                 val ok = stroke.measure.getSegment(
@@ -550,7 +562,6 @@ fun AnimationCanvas(
 
                 val distance = (baseDistance + tail).coerceIn(0f, stroke.length)
 
-                // Force clean completion near the end.
                 if (t >= 0.95f || distance >= stroke.length - 0.75f) {
                     drawPath(svg, inkColor, style = Fill)
                 } else {
@@ -575,7 +586,6 @@ fun AnimationCanvas(
                         clipAndroid.fillType = AndroidPath.FillType.WINDING
                         clipAndroid.addPath(strokeFill)
 
-                        // Start cap.
                         cap.reset()
                         cap.fillType = AndroidPath.FillType.WINDING
                         cap.addCircle(
@@ -584,9 +594,8 @@ fun AnimationCanvas(
                             stroke.maskWidth * 0.70f,
                             AndroidPath.Direction.CW
                         )
-                        clipAndroid.addPath(cap)
+                        clipAndroid.addUnion(cap)
 
-                        // Corner coverage for sharp vertices like 幺.
                         for (idx in stroke.points.indices) {
                             val boost = stroke.cornerBoost[idx]
 
@@ -599,12 +608,11 @@ fun AnimationCanvas(
                                     boost,
                                     AndroidPath.Direction.CW
                                 )
-                                clipAndroid.addPath(cap)
+                                clipAndroid.addUnion(cap)
                             }
                         }
 
-                        // Moving end cap with extra tip boost.
-                        if (stroke.measure.getPosTan(distance, posTan)) {
+                        if (stroke.measure.getPosTan(distance, pos, tan)) {
                             val tipBoost = if (t > 0.62f) {
                                 ((t - 0.62f) / 0.38f) * stroke.maskWidth * 0.78f
                             } else {
@@ -614,12 +622,12 @@ fun AnimationCanvas(
                             cap.reset()
                             cap.fillType = AndroidPath.FillType.WINDING
                             cap.addCircle(
-                                posTan.x,
-                                posTan.y,
+                                pos[0],
+                                pos[1],
                                 stroke.maskWidth * 0.72f + tipBoost,
                                 AndroidPath.Direction.CW
                             )
-                            clipAndroid.addPath(cap)
+                            clipAndroid.addUnion(cap)
                         }
 
                         clipPath(clipAndroid.asComposePath()) {
