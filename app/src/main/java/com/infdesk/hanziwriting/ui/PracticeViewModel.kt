@@ -20,9 +20,19 @@ import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
 import kotlinx.coroutines.launch
 
-enum class PracticePhase { ANIMATION, TRACE_WITH_TEMPLATE, STRUCTURE_QUIZ, TRACE_BLIND_TEMPLATE, MEMORY_DRAW }
+enum class PracticePhase {
+    ANIMATION,
+    TRACE_WITH_TEMPLATE,
+    STRUCTURE_QUIZ,
+    TRACE_BLIND_TEMPLATE,
+    MEMORY_DRAW
+}
 
-data class ComponentInfo(val char: Char, val leafIndex: Int, val order: Int)
+data class ComponentInfo(
+    val char: Char,
+    val leafIndex: Int,
+    val order: Int
+)
 
 data class CharacterProgress(
     val character: String,
@@ -34,32 +44,59 @@ data class CharacterProgress(
     val leafRank: Map<Int, Int> = emptyMap()
 ) {
     fun getPhases(): List<PracticePhase> {
-        val list = mutableListOf(PracticePhase.ANIMATION, PracticePhase.TRACE_WITH_TEMPLATE)
-        if (orderedComponents.size > 1) list.add(PracticePhase.STRUCTURE_QUIZ)
+        val list = mutableListOf(
+            PracticePhase.ANIMATION,
+            PracticePhase.TRACE_WITH_TEMPLATE
+        )
+
+        if (orderedComponents.size > 1) {
+            list.add(PracticePhase.STRUCTURE_QUIZ)
+        }
+
         list.add(PracticePhase.TRACE_BLIND_TEMPLATE)
         list.add(PracticePhase.MEMORY_DRAW)
+
         return list
     }
 }
 
-class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
+class PracticeViewModel(
+    private val database: AppDatabase
+) : ViewModel() {
+
     val characters = mutableStateListOf<CharacterProgress>()
 
     val allPossiblePhases = listOf(
-        PracticePhase.ANIMATION, PracticePhase.TRACE_WITH_TEMPLATE,
-        PracticePhase.STRUCTURE_QUIZ, PracticePhase.TRACE_BLIND_TEMPLATE, PracticePhase.MEMORY_DRAW
+        PracticePhase.ANIMATION,
+        PracticePhase.TRACE_WITH_TEMPLATE,
+        PracticePhase.STRUCTURE_QUIZ,
+        PracticePhase.TRACE_BLIND_TEMPLATE,
+        PracticePhase.MEMORY_DRAW
     )
 
-    var currentGlobalPhaseIndex by mutableIntStateOf(0); private set
-    var currentCharIndex by mutableIntStateOf(0); private set
-    val currentGlobalPhase: PracticePhase get() = allPossiblePhases[currentGlobalPhaseIndex]
-    val currentChar: CharacterProgress? get() = characters.getOrNull(currentCharIndex)
+    var currentGlobalPhaseIndex by mutableIntStateOf(0)
+        private set
 
-    var isAllComplete by mutableStateOf(false); private set
-    var waitingForNext by mutableStateOf(false); private set
+    var currentCharIndex by mutableIntStateOf(0)
+        private set
 
-    var currentStrokeIndex by mutableIntStateOf(0); private set
-    var totalErrors by mutableIntStateOf(0); private set
+    val currentGlobalPhase: PracticePhase
+        get() = allPossiblePhases[currentGlobalPhaseIndex]
+
+    val currentChar: CharacterProgress?
+        get() = characters.getOrNull(currentCharIndex)
+
+    var isAllComplete by mutableStateOf(false)
+        private set
+
+    var waitingForNext by mutableStateOf(false)
+        private set
+
+    var currentStrokeIndex by mutableIntStateOf(0)
+        private set
+
+    var totalErrors by mutableIntStateOf(0)
+        private set
 
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
@@ -70,36 +107,56 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
 
     fun loadCharacters(input: String) {
         characters.clear()
-        input.forEach { characters.add(CharacterProgress(character = it.toString())) }
-        if (characters.isEmpty()) return
+
+        isAllComplete = false
+        waitingForNext = false
+        currentGlobalPhaseIndex = 0
+        currentCharIndex = 0
+
+        resetStrokeState()
+
+        input.forEach {
+            characters.add(CharacterProgress(character = it.toString()))
+        }
+
+        if (characters.isEmpty()) {
+            isAllComplete = true
+            return
+        }
 
         viewModelScope.launch {
             characters.forEachIndexed { index, cp ->
                 val charData = database.hanziDao().getCharacterExact(cp.character)
                 val graphicsData = database.hanziDao().getGraphics(cp.character)
+
                 if (charData != null && graphicsData != null) {
                     val type = object : TypeToken<Map<String, Any>>() {}.type
                     val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
+
                     @Suppress("UNCHECKED_CAST")
                     val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
-                    @Suppress("UNCHECKED_CAST")
-                    val strokes = (jsonMap["strokes"] as? List<String>) ?: emptyList()
 
-                    // Simple (non-recursive) IDS decomposition
+                    @Suppress("UNCHECKED_CAST")
+                    val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
+
                     val idsRoot = IdsParser.parse(charData.decomposition)
                     val leaves = IdsParser.getLeavesWithIndex(idsRoot)
+
                     val orderedComponents = mutableListOf<ComponentInfo>()
                     val leafRank = mutableMapOf<Int, Int>()
-
                     val firstAppearance = mutableMapOf<Int, Int>()
+
                     if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
                         try {
                             val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
-                            val matches: List<List<Number>?> = gson.fromJson(charData.matchesJson, matchesType)
+                            val matches: List<List<Number>?> =
+                                gson.fromJson(charData.matchesJson, matchesType)
+
                             matches.forEachIndexed { strokeIndex, path ->
                                 if (path != null) {
                                     val intPath = path.map { it.toInt() }
                                     val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
+
                                     if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
                                         firstAppearance[leafIndex] = strokeIndex
                                     }
@@ -110,25 +167,46 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
                         }
                     }
 
-                    val sortedLeaves = leaves.sortedBy { firstAppearance[it.index] ?: Int.MAX_VALUE }
+                    val sortedLeaves = leaves.sortedBy {
+                        firstAppearance[it.index] ?: Int.MAX_VALUE
+                    }
+
                     sortedLeaves.forEachIndexed { rank, leaf ->
-                        orderedComponents.add(ComponentInfo(leaf.char, leaf.index, rank))
+                        orderedComponents.add(
+                            ComponentInfo(
+                                char = leaf.char,
+                                leafIndex = leaf.index,
+                                order = rank
+                            )
+                        )
                         leafRank[leaf.index] = rank
                     }
 
                     characters[index] = cp.copy(
-                        charData = charData, medians = medians, strokes = strokes,
+                        charData = charData,
+                        medians = medians,
+                        strokes = strokes,
                         orderedComponents = orderedComponents,
-                        idsRoot = idsRoot, leafRank = leafRank
+                        idsRoot = idsRoot,
+                        leafRank = leafRank
                     )
                 }
             }
+
             while (currentCharIndex < characters.size &&
-                !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) currentCharIndex++
+                !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
+            ) {
+                currentCharIndex++
+            }
         }
     }
 
     fun onPhaseTaskComplete() {
+        if (characters.isEmpty()) {
+            isAllComplete = true
+            return
+        }
+
         if (isAbsoluteLastStep()) {
             isAllComplete = true
             ProgressStore.incrementSuccess(characters.first().character)
@@ -142,41 +220,66 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         advancePhase()
     }
 
-    private fun isAbsoluteLastStep(): Boolean =
-        currentGlobalPhaseIndex == allPossiblePhases.lastIndex && currentCharIndex == characters.lastIndex
+    private fun isAbsoluteLastStep(): Boolean {
+        return currentGlobalPhaseIndex == allPossiblePhases.lastIndex &&
+            currentCharIndex == characters.lastIndex
+    }
 
     private fun advancePhase() {
         var nextIndex = currentCharIndex + 1
+
         while (nextIndex < characters.size) {
             if (characters[nextIndex].getPhases().contains(currentGlobalPhase)) break
             nextIndex++
         }
+
         if (nextIndex < characters.size) {
             currentCharIndex = nextIndex
         } else {
             if (currentGlobalPhaseIndex < allPossiblePhases.lastIndex) {
                 currentGlobalPhaseIndex++
                 currentCharIndex = 0
+
                 while (currentCharIndex < characters.size &&
-                    !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)) currentCharIndex++
-                if (currentCharIndex >= characters.size) advancePhase()
+                    !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
+                ) {
+                    currentCharIndex++
+                }
+
+                if (currentCharIndex >= characters.size) {
+                    advancePhase()
+                }
             } else {
                 isAllComplete = true
-                ProgressStore.incrementSuccess(characters.first().character)
+
+                if (characters.isNotEmpty()) {
+                    ProgressStore.incrementSuccess(characters.first().character)
+                }
             }
         }
+
         resetStrokeState()
     }
 
-    fun selectComponent(optionId: Int, component: String): Boolean {
+    fun selectComponent(
+        optionId: Int,
+        component: String
+    ): Boolean {
         val cp = currentChar ?: return false
+
         val expectedIndex = selectedComponents.size
         if (expectedIndex >= cp.orderedComponents.size) return false
+
         if (usedOptionIds.contains(optionId)) return false
+
         return if (component == cp.orderedComponents[expectedIndex].char.toString()) {
             selectedComponents.add(component)
             usedOptionIds.add(optionId)
-            if (selectedComponents.size == cp.orderedComponents.size) onPhaseTaskComplete()
+
+            if (selectedComponents.size == cp.orderedComponents.size) {
+                onPhaseTaskComplete()
+            }
+
             true
         } else {
             totalErrors++
@@ -184,19 +287,40 @@ class PracticeViewModel(private val database: AppDatabase) : ViewModel() {
         }
     }
 
-    fun addPointToCurrentStroke(point: Offset) { currentStrokePoints.add(point) }
+    fun addPointToCurrentStroke(point: Offset) {
+        currentStrokePoints.add(point)
+    }
 
     fun finishStroke(canvasSize: Float) {
         val cp = currentChar ?: return
+
+        if (cp.medians.isEmpty()) {
+            currentStrokePoints.clear()
+            onPhaseTaskComplete()
+            return
+        }
+
         if (currentStrokeIndex >= cp.medians.size) return
+
         val scale = canvasSize / HanziTransform.GRID_WIDTH
-        val expected = cp.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
-        val isCorrect = StrokeEvaluator.evaluateStroke(currentStrokePoints.toList(), expected, canvasSize)
+        val expected = cp.medians[currentStrokeIndex].map {
+            HanziTransform.toCanvas(it, scale)
+        }
+
+        val isCorrect = StrokeEvaluator.evaluateStroke(
+            currentStrokePoints.toList(),
+            expected,
+            canvasSize
+        )
+
         if (isCorrect) {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-            if (currentStrokeIndex >= cp.medians.size) onPhaseTaskComplete()
+
+            if (currentStrokeIndex >= cp.medians.size) {
+                onPhaseTaskComplete()
+            }
         } else {
             totalErrors++
             currentStrokePoints.clear()
