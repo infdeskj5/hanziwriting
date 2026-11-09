@@ -107,7 +107,7 @@ fun PracticeScreen(
                         autoPlay = true,
                         loop = true,
                         showGuide = true,
-                        useSvgFill = true,
+                        useSvgFill = false,
                         onComplete = {}
                     )
                 }
