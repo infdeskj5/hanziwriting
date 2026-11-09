@@ -15,7 +15,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
-import kotlinx.coroutines.delay
 
 private data class QuizOption(
     val id: Int,
@@ -38,13 +37,6 @@ fun PracticeScreen(
     LaunchedEffect(wordToPractice) {
         if (wordToPractice != null) {
             viewModel.loadCharacters(wordToPractice)
-        }
-    }
-
-    LaunchedEffect(viewModel.waitingForNext) {
-        if (viewModel.waitingForNext) {
-            delay(650L)
-            viewModel.proceedNext()
         }
     }
 
@@ -107,7 +99,8 @@ fun PracticeScreen(
                         autoPlay = true,
                         loop = true,
                         showGuide = true,
-                        useSvgFill = false,
+                        useSvgFill = true,
+                        frameDelayMs = 33,
                         onComplete = {}
                     )
                 }
@@ -249,14 +242,14 @@ fun PracticeScreen(
 
                     Button(
                         onClick = {
-                            if (!used) {
+                            if (!used && !viewModel.waitingForNext) {
                                 viewModel.selectComponent(
                                     option.id,
                                     option.label
                                 )
                             }
                         },
-                        enabled = !used,
+                        enabled = !used && !viewModel.waitingForNext,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -299,18 +292,40 @@ fun PracticeScreen(
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
+            }
+        }
 
-                if (viewModel.isAllComplete) {
-                    Button(onClick = onBackClick) {
-                        Text("Finish!")
-                    }
-                } else if (viewModel.waitingForNext) {
-                    Text(
-                        "Nice! Advancing...",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+        if (viewModel.waitingForNext) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = { viewModel.proceedNext() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            ) {
+                Text(
+                    "Done",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        } else if (viewModel.isAllComplete) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onBackClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Text(
+                    "Finish!",
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
         }
     }
