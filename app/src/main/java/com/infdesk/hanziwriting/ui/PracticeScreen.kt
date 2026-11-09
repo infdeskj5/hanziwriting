@@ -1,34 +1,13 @@
 package com.infdesk.hanziwriting.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +31,9 @@ fun PracticeScreen(
     BackHandler(enabled = true) { onBackClick() }
 
     val context = LocalContext.current
-    val viewModel = remember { PracticeViewModel(AppDatabase.getDatabase(context)) }
+    val viewModel = remember {
+        PracticeViewModel(AppDatabase.getDatabase(context))
+    }
 
     LaunchedEffect(wordToPractice) {
         if (wordToPractice != null) {
@@ -60,10 +41,9 @@ fun PracticeScreen(
         }
     }
 
-    // Automatically advance after a phase task is completed.
     LaunchedEffect(viewModel.waitingForNext) {
         if (viewModel.waitingForNext) {
-            delay(650)
+            delay(650L)
             viewModel.proceedNext()
         }
     }
@@ -112,7 +92,6 @@ fun PracticeScreen(
 
         val data = currentChar.charData!!
 
-        // TOP BLOCK
         Box(
             modifier = Modifier
                 .height(120.dp)
@@ -167,7 +146,6 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // DEFINITION
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -193,7 +171,6 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // MIDDLE AREA
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             Box(
                 modifier = Modifier
@@ -229,7 +206,6 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // BOTTOM CONTROLS
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             val correctLabels = currentChar.orderedComponents.map { it.char.toString() }
             val correctLabelSet = correctLabels.toSet()
@@ -256,7 +232,10 @@ fun PracticeScreen(
                     )
                 }
 
-            val options = remember(currentChar.character, currentChar.orderedComponents) {
+            val options = remember(
+                currentChar.character,
+                currentChar.orderedComponents
+            ) {
                 (correctOptions + distractorOptions).shuffled()
             }
 
@@ -270,7 +249,10 @@ fun PracticeScreen(
                     Button(
                         onClick = {
                             if (!used) {
-                                viewModel.selectComponent(option.id, option.label)
+                                viewModel.selectComponent(
+                                    option.id,
+                                    option.label
+                                )
                             }
                         },
                         enabled = !used,
