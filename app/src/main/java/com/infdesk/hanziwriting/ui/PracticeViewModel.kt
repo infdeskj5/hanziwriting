@@ -81,7 +81,9 @@ class PracticeViewModel(
         private set
 
     val currentGlobalPhase: PracticePhase
-        get() = allPossiblePhases[currentGlobalPhaseIndex]
+        get() = allPossiblePhases[
+            currentGlobalPhaseIndex.coerceIn(0, allPossiblePhases.lastIndex)
+        ]
 
     val currentChar: CharacterProgress?
         get() = characters.getOrNull(currentCharIndex)
@@ -107,13 +109,12 @@ class PracticeViewModel(
 
     fun loadCharacters(input: String) {
         characters.clear()
+        resetStrokeState()
 
         isAllComplete = false
         waitingForNext = false
         currentGlobalPhaseIndex = 0
         currentCharIndex = 0
-
-        resetStrokeState()
 
         input.forEach {
             characters.add(CharacterProgress(character = it.toString()))
@@ -193,11 +194,40 @@ class PracticeViewModel(
                 }
             }
 
-            while (currentCharIndex < characters.size &&
+            alignCurrentPosition()
+        }
+    }
+
+    private fun alignCurrentPosition() {
+        if (characters.isEmpty()) {
+            isAllComplete = true
+            return
+        }
+
+        while (
+            currentCharIndex < characters.size &&
+            !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
+        ) {
+            currentCharIndex++
+        }
+
+        while (
+            currentCharIndex >= characters.size &&
+            currentGlobalPhaseIndex < allPossiblePhases.lastIndex
+        ) {
+            currentGlobalPhaseIndex++
+            currentCharIndex = 0
+
+            while (
+                currentCharIndex < characters.size &&
                 !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
             ) {
                 currentCharIndex++
             }
+        }
+
+        if (currentCharIndex >= characters.size) {
+            isAllComplete = true
         }
     }
 
@@ -221,15 +251,32 @@ class PracticeViewModel(
     }
 
     private fun isAbsoluteLastStep(): Boolean {
-        return currentGlobalPhaseIndex == allPossiblePhases.lastIndex &&
-            currentCharIndex == characters.lastIndex
+        if (currentGlobalPhaseIndex != allPossiblePhases.lastIndex) return false
+
+        var next = currentCharIndex + 1
+
+        while (
+            next < characters.size &&
+            !characters[next].getPhases().contains(currentGlobalPhase)
+        ) {
+            next++
+        }
+
+        return next >= characters.size
     }
 
     private fun advancePhase() {
+        if (characters.isEmpty()) {
+            isAllComplete = true
+            return
+        }
+
         var nextIndex = currentCharIndex + 1
 
-        while (nextIndex < characters.size) {
-            if (characters[nextIndex].getPhases().contains(currentGlobalPhase)) break
+        while (
+            nextIndex < characters.size &&
+            !characters[nextIndex].getPhases().contains(currentGlobalPhase)
+        ) {
             nextIndex++
         }
 
@@ -240,7 +287,8 @@ class PracticeViewModel(
                 currentGlobalPhaseIndex++
                 currentCharIndex = 0
 
-                while (currentCharIndex < characters.size &&
+                while (
+                    currentCharIndex < characters.size &&
                     !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
                 ) {
                     currentCharIndex++
