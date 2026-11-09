@@ -239,7 +239,9 @@ class PracticeViewModel(
 
         if (isAbsoluteLastStep()) {
             isAllComplete = true
-            ProgressStore.incrementSuccess(characters.first().character)
+            characters.firstOrNull()?.let {
+                ProgressStore.incrementSuccess(it.character)
+            }
         } else {
             waitingForNext = true
         }
@@ -300,8 +302,8 @@ class PracticeViewModel(
             } else {
                 isAllComplete = true
 
-                if (characters.isNotEmpty()) {
-                    ProgressStore.incrementSuccess(characters.first().character)
+                characters.firstOrNull()?.let {
+                    ProgressStore.incrementSuccess(it.character)
                 }
             }
         }
