@@ -40,32 +40,28 @@ fun AnimationCanvas(
     val canvasSizePx = with(density) { 100.dp.toPx() }
     val scale = canvasSizePx / HanziTransform.GRID_WIDTH
 
-    // Reusable Android paths for clipping to avoid constant allocation
     val partialMedian = remember { AndroidPath() }
     val thickClip = remember { AndroidPath() }
     
-    // Create a thick "brush" paint to use as a mask
+    // FIX 1A: Increased thickness to 300f to ensure the mask fully covers 
+    // the outer edges of the SVG shape during sharp turns (like in 幺).
     val maskPaint = remember(scale) {
         Paint().apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
-            // Make it thick enough to fully cover the SVG stroke shape
-            strokeWidth = scale * 150f 
+            strokeWidth = scale * 300f 
         }
     }
 
-    // Precompute SVG paths and Median measures ONCE
     val prepared = remember(strokes, medians, canvasSizePx) {
         val safeMedians = medians.take(strokes.size)
         strokes.mapIndexedNotNull { index, svg ->
             try {
-                // 1. Parse the beautiful SVG template shape
                 val androidSvgPath = PathParser.createPathFromPathData(svg)
                 androidSvgPath.transform(HanziTransform.matrix(scale))
                 val composeSvgPath = androidSvgPath.asComposePath()
                 
-                // 2. Parse the median (centerline) for animation timing
                 val pts = safeMedians.getOrElse(index) { emptyList() }
                 val androidMedianPath = AndroidPath()
                 pts.forEachIndexed { i, pt ->
@@ -91,16 +87,15 @@ fun AnimationCanvas(
                     currentStroke = i
                     progress.snapTo(0f)
                     
-                    // Dynamic duration: longer strokes take more time, mimicking human writing speed
                     val baseDuration = 350
                     val lengthFactor = prepared[i].length / (canvasSizePx * 0.4f) 
                     val duration = (baseDuration + lengthFactor * 250).toInt().coerceIn(350, 900)
                     
                     progress.animateTo(1f, tween(durationMillis = duration, easing = FastOutSlowInEasing))
-                    delay(150) // Pen lift delay
+                    delay(150) 
                 }
                 if (!loop) { onComplete(); break }
-                delay(600) // Pause before looping
+                delay(600) 
             }
         }
     }
@@ -117,18 +112,22 @@ fun AnimationCanvas(
         if (currentStroke < prepared.size) {
             val p = prepared[currentStroke]
             
-            // Get the segment of the median that corresponds to current progress
-            partialMedian.reset()
-            p.medianMeasure.getSegment(0f, p.length * progress.value, partialMedian, true)
-            
-            // Convert the partial median line into a thick filled path to use as a clip mask
-            thickClip.reset()
-            maskPaint.getFillPath(partialMedian, thickClip)
-            val composeClip = thickClip.asComposePath()
-            
-            // Reveal the beautiful SVG template shape through the moving mask
-            clipPath(composeClip) {
+            // FIX 1B: When the animation reaches 100%, bypass the mask and draw the full SVG shape.
+            // This prevents the "cut-off tip" caused by PathMeasure missing the absolute last pixel 
+            // during the 150ms pen-lift delay.
+            if (progress.value >= 1.0f) {
                 drawPath(p.svgPath, strokeColor, style = Fill)
+            } else {
+                partialMedian.reset()
+                p.medianMeasure.getSegment(0f, p.length * progress.value, partialMedian, true)
+                
+                thickClip.reset()
+                maskPaint.getFillPath(partialMedian, thickClip)
+                val composeClip = thickClip.asComposePath()
+                
+                clipPath(composeClip) {
+                    drawPath(p.svgPath, strokeColor, style = Fill)
+                }
             }
         }
     }
