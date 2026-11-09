@@ -1,13 +1,34 @@
 package com.infdesk.hanziwriting.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -15,6 +36,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
+import kotlinx.coroutines.delay
+
+private data class QuizOption(
+    val id: Int,
+    val label: String
+)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -23,37 +50,75 @@ fun PracticeScreen(
     onBackClick: () -> Unit = {}
 ) {
     BackHandler(enabled = true) { onBackClick() }
+
     val context = LocalContext.current
     val viewModel = remember { PracticeViewModel(AppDatabase.getDatabase(context)) }
 
     LaunchedEffect(wordToPractice) {
-        if (wordToPractice != null) viewModel.loadCharacters(wordToPractice)
+        if (wordToPractice != null) {
+            viewModel.loadCharacters(wordToPractice)
+        }
+    }
+
+    // Automatically advance after a phase task is completed.
+    LaunchedEffect(viewModel.waitingForNext) {
+        if (viewModel.waitingForNext) {
+            delay(650)
+            viewModel.proceedNext()
+        }
     }
 
     val currentChar = viewModel.currentChar
     val phase = viewModel.currentGlobalPhase
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBackClick) { Icon(Icons.Default.Close, contentDescription = "Exit practice") }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBackClick) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Exit practice"
+                )
+            }
+
             Spacer(modifier = Modifier.weight(1f))
+
             Text(
-                "Phase ${viewModel.currentGlobalPhaseIndex + 1}/5 - Char ${viewModel.currentCharIndex + 1}/${viewModel.characters.size}",
-                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary
+                "Phase ${viewModel.currentGlobalPhaseIndex + 1}/5 - " +
+                    "Char ${viewModel.currentCharIndex + 1}/${viewModel.characters.size}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
             )
+
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.width(48.dp))
         }
 
         if (currentChar == null || currentChar.charData == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
             return
         }
 
         val data = currentChar.charData!!
 
         // TOP BLOCK
-        Box(modifier = Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .height(120.dp)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
             when (phase) {
                 PracticePhase.ANIMATION -> {
                     AnimationCanvas(
@@ -62,20 +127,40 @@ fun PracticeScreen(
                         modifier = Modifier.size(100.dp),
                         autoPlay = true,
                         loop = true,
+                        showGuide = true,
                         onComplete = {}
                     )
                 }
+
                 PracticePhase.TRACE_WITH_TEMPLATE -> {
-                    Text(data.character, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        data.character,
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
+
                 PracticePhase.STRUCTURE_QUIZ -> {
-                    Text("Select components in writing order", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Select components in writing order",
+                        style = MaterialTheme.typography.titleMedium
+                    )
                 }
+
                 PracticePhase.TRACE_BLIND_TEMPLATE -> {
-                    Text("Draw with template", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Draw with template",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+
                 PracticePhase.MEMORY_DRAW -> {
-                    Text("Draw from memory", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        "Draw from memory",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
         }
@@ -83,10 +168,26 @@ fun PracticeScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         // DEFINITION
-        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
-                Text(data.definition, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 80.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    PinyinUtils.convertToToneMarks(data.pinyin),
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                Text(
+                    data.definition,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center
+                )
             }
         }
 
@@ -94,7 +195,12 @@ fun PracticeScreen(
 
         // MIDDLE AREA
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 StructureView(
                     root = currentChar.idsRoot,
                     leafRank = currentChar.leafRank,
@@ -104,10 +210,20 @@ fun PracticeScreen(
             }
         } else {
             val showTemplate = phase == PracticePhase.ANIMATION ||
-                               phase == PracticePhase.TRACE_WITH_TEMPLATE ||
-                               phase == PracticePhase.TRACE_BLIND_TEMPLATE
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                HanziCanvas(viewModel = viewModel, showTemplate = showTemplate, modifier = Modifier.size(300.dp))
+                phase == PracticePhase.TRACE_WITH_TEMPLATE ||
+                phase == PracticePhase.TRACE_BLIND_TEMPLATE
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                HanziCanvas(
+                    viewModel = viewModel,
+                    showTemplate = showTemplate,
+                    modifier = Modifier.size(300.dp)
+                )
             }
         }
 
@@ -115,31 +231,102 @@ fun PracticeScreen(
 
         // BOTTOM CONTROLS
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            val correctComponents = currentChar.orderedComponents.map { it.char.toString() }
-            val distractors = listOf("氵", "木", "口", "扌", "忄", "艹", "辶", "阝", "刂", "日", "月", "女", "心")
-            val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
-            FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                options.forEach { comp ->
-                    val originalIndex = correctComponents.indexOf(comp)
-                    // FIX 3: Changed Button colors from default gray to your app's Primary theme colors
+            val correctLabels = currentChar.orderedComponents.map { it.char.toString() }
+            val correctLabelSet = correctLabels.toSet()
+
+            val correctOptions = currentChar.orderedComponents.mapIndexed { index, component ->
+                QuizOption(
+                    id = index,
+                    label = component.char.toString()
+                )
+            }
+
+            val distractorPool = listOf(
+                "氵", "木", "口", "扌", "忄", "艹", "辶", "阝",
+                "刂", "日", "月", "女", "心", "人", "大", "小"
+            ).filter { it !in correctLabelSet }
+
+            val distractorOptions = distractorPool
+                .shuffled()
+                .take(4)
+                .mapIndexed { index, label ->
+                    QuizOption(
+                        id = correctOptions.size + index,
+                        label = label
+                    )
+                }
+
+            val options = remember(currentChar.character, currentChar.orderedComponents) {
+                (correctOptions + distractorOptions).shuffled()
+            }
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                options.forEach { option ->
+                    val used = viewModel.usedOptionIds.contains(option.id)
+
                     Button(
-                        onClick = { viewModel.selectComponent(originalIndex, comp) },
-                        enabled = !viewModel.selectedComponents.contains(comp),
+                        onClick = {
+                            if (!used) {
+                                viewModel.selectComponent(option.id, option.label)
+                            }
+                        },
+                        enabled = !used,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            disabledContainerColor = if (used) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            disabledContentColor = if (used) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         )
-                    ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
+                    ) {
+                        Text(
+                            option.label,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
                 }
             }
         } else {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column {
-                    Text("Stroke: ${minOf(viewModel.currentStrokeIndex + 1, currentChar.medians.size)}/${currentChar.medians.size}", style = MaterialTheme.typography.bodyLarge)
-                    Text("Errors: ${viewModel.totalErrors}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Stroke: " +
+                            "${minOf(viewModel.currentStrokeIndex + 1, currentChar.medians.size)}" +
+                            "/${currentChar.medians.size}",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+
+                    Text(
+                        "Errors: ${viewModel.totalErrors}",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                 }
+
                 if (viewModel.isAllComplete) {
-                    Button(onClick = onBackClick) { Text("Finish!") }
+                    Button(onClick = onBackClick) {
+                        Text("Finish!")
+                    }
+                } else if (viewModel.waitingForNext) {
+                    Text(
+                        "Nice! Advancing...",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
