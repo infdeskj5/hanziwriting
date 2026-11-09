@@ -100,7 +100,7 @@ fun PracticeScreen(
                         loop = true,
                         showGuide = true,
                         useSvgFill = true,
-                        frameDelayMs = 33,
+                        frameDelayMs = 45,
                         onComplete = {}
                     )
                 }
