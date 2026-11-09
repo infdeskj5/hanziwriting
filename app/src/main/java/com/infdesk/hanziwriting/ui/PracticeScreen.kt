@@ -56,7 +56,6 @@ fun PracticeScreen(
         Box(modifier = Modifier.height(120.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when (phase) {
                 PracticePhase.ANIMATION -> {
-                    // Looping animation plays WHILE you practice
                     AnimationCanvas(
                         medians = currentChar.medians,
                         strokes = currentChar.strokes,
@@ -83,7 +82,7 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // DEFINITION (scrollable, capped height)
+        // DEFINITION
         Box(modifier = Modifier.fillMaxWidth().heightIn(max = 80.dp).verticalScroll(rememberScrollState())) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(PinyinUtils.convertToToneMarks(data.pinyin), style = MaterialTheme.typography.titleSmall)
@@ -93,7 +92,7 @@ fun PracticeScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // MIDDLE AREA: structure view (quiz) OR drawing canvas
+        // MIDDLE AREA
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 StructureView(
@@ -121,12 +120,15 @@ fun PracticeScreen(
             val options = remember(correctComponents) { (correctComponents + distractors.shuffled().take(4)).shuffled() }
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 options.forEach { comp ->
-                    // FIX: We must pass the ORIGINAL index from correctComponents, not the shuffled index, 
-                    // so the ViewModel knows the correct stroke order was selected.
                     val originalIndex = correctComponents.indexOf(comp)
+                    // FIX 3: Changed Button colors from default gray to your app's Primary theme colors
                     Button(
                         onClick = { viewModel.selectComponent(originalIndex, comp) },
-                        enabled = !viewModel.selectedComponents.contains(comp)
+                        enabled = !viewModel.selectedComponents.contains(comp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     ) { Text(comp, style = MaterialTheme.typography.titleMedium) }
                 }
             }
