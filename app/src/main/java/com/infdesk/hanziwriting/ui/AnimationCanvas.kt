@@ -5,11 +5,13 @@ import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import android.graphics.RectF
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,193 +34,101 @@ import androidx.core.graphics.PathParser
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 import kotlin.math.abs
-import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.sqrt
 
-private data class KeyFrame(
-    val fraction: Float,
-    val pauseMs: Int
-)
-
-private data class PreparedStroke(
+private class PreparedStroke(
     val svgPath: ComposePath?,
     val fallbackPath: ComposePath,
+    val medianPath: AndroidPath,
     val measure: AndroidPathMeasure,
     val length: Float,
-    val points: List<Offset>,
-    val cumulative: FloatArray,
-    val cornerBoost: FloatArray,
-    val keyFrames: List<KeyFrame>,
     val maskWidth: Float,
-    val startX: Float,
-    val startY: Float,
+    val durationMs: Int,
     val isDot: Boolean
 )
 
-private fun dist(dx: Float, dy: Float): Float = sqrt(dx * dx + dy * dy)
-
-private fun AndroidPath.addUnion(other: AndroidPath) {
-    try {
-        if (!op(other, AndroidPath.Op.UNION)) {
-            addPath(other)
-        }
-    } catch (_: Throwable) {
-        addPath(other)
-    }
+private fun dist(dx: Float, dy: Float): Float {
+    return sqrt(dx * dx + dy * dy)
 }
 
-private fun buildAndroidPath(points: List<Offset>): AndroidPath {
+private fun buildSmoothAndroidPath(points: List<Offset>): AndroidPath {
     val path = AndroidPath()
+
     if (points.isEmpty()) return path
 
     path.moveTo(points[0].x, points[0].y)
-    for (i in 1 until points.size) {
-        path.lineTo(points[i].x, points[i].y)
+
+    if (points.size == 1) return path
+
+    if (points.size == 2) {
+        path.lineTo(points[1].x, points[1].y)
+        return path
     }
+
+    for (i in 1 until points.size - 1) {
+        val current = points[i]
+        val next = points[i + 1]
+
+        val midX = (current.x + next.x) / 2f
+        val midY = (current.y + next.y) / 2f
+
+        path.quadTo(current.x, current.y, midX, midY)
+    }
+
+    path.lineTo(points.last().x, points.last().y)
     return path
 }
 
-private fun buildComposePath(points: List<Offset>): ComposePath {
+private fun buildSmoothComposePath(points: List<Offset>): ComposePath {
     val path = ComposePath()
+
     if (points.isEmpty()) return path
 
     path.moveTo(points[0].x, points[0].y)
-    for (i in 1 until points.size) {
-        path.lineTo(points[i].x, points[i].y)
+
+    if (points.size == 1) return path
+
+    if (points.size == 2) {
+        path.lineTo(points[1].x, points[1].y)
+        return path
     }
+
+    for (i in 1 until points.size - 1) {
+        val current = points[i]
+        val next = points[i + 1]
+
+        val midX = (current.x + next.x) / 2f
+        val midY = (current.y + next.y) / 2f
+
+        path.quadraticBezierTo(current.x, current.y, midX, midY)
+    }
+
+    path.lineTo(points.last().x, points.last().y)
     return path
-}
-
-private fun buildCumulative(points: List<Offset>): FloatArray {
-    val cumulative = FloatArray(points.size)
-    for (i in 1 until points.size) {
-        val dx = points[i].x - points[i - 1].x
-        val dy = points[i].y - points[i - 1].y
-        cumulative[i] = cumulative[i - 1] + dist(dx, dy)
-    }
-    return cumulative
-}
-
-private fun angleAt(points: List<Offset>, index: Int): Float {
-    if (index <= 0 || index >= points.size - 1) return 0f
-
-    val dx1 = points[index].x - points[index - 1].x
-    val dy1 = points[index].y - points[index - 1].y
-    val dx2 = points[index + 1].x - points[index].x
-    val dy2 = points[index + 1].y - points[index].y
-
-    val l1 = dist(dx1, dy1)
-    val l2 = dist(dx2, dy2)
-
-    if (l1 < 0.5f || l2 < 0.5f) return 0f
-
-    val dot = (dx1 * dx2 + dy1 * dy2) / (l1 * l2)
-    val cross = (dx1 * dy2 - dy1 * dx2) / (l1 * l2)
-
-    return abs(atan2(cross, dot))
-}
-
-private fun buildCornerBoost(points: List<Offset>, maskWidth: Float): FloatArray {
-    val boost = FloatArray(points.size)
-
-    if (points.isEmpty()) return boost
-
-    if (points.size == 1) {
-        boost[0] = maskWidth
-        return boost
-    }
-
-    boost[0] = maskWidth * 0.75f
-    boost[points.size - 1] = maskWidth * 0.85f
-
-    for (i in 1 until points.size - 1) {
-        val turn = angleAt(points, i) / kotlin.math.PI.toFloat()
-        boost[i] = (maskWidth * (0.58f + turn * 0.85f)).coerceAtMost(maskWidth * 1.65f)
-    }
-
-    return boost
-}
-
-private fun buildCornerDelay(points: List<Offset>): FloatArray {
-    val delays = FloatArray(points.size)
-
-    for (i in 1 until points.size - 1) {
-        val turn = angleAt(points, i) / kotlin.math.PI.toFloat()
-        delays[i] = if (turn > 0.12f) {
-            (turn * 150f).coerceIn(0f, 120f)
-        } else {
-            0f
-        }
-    }
-
-    return delays
-}
-
-private fun buildKeyFrames(
-    cumulative: FloatArray,
-    cornerDelay: FloatArray,
-    length: Float
-): List<KeyFrame> {
-    val frames = ArrayList<KeyFrame>()
-    frames.add(KeyFrame(0f, 0))
-
-    if (length <= 0f || cumulative.size <= 2) {
-        frames.add(KeyFrame(1f, 0))
-        return frames
-    }
-
-    var lastFraction = 0f
-
-    for (i in 1 until cumulative.size - 1) {
-        val fraction = (cumulative[i] / length).coerceIn(0f, 1f)
-
-        if (fraction <= 0.01f || fraction >= 0.99f) continue
-
-        val pause = cornerDelay[i].toInt().coerceIn(0, 130)
-
-        if (fraction - lastFraction < 0.03f) {
-            if (frames.size > 1) {
-                val previous = frames.removeAt(frames.size - 1)
-                frames.add(
-                    KeyFrame(
-                        fraction = fraction,
-                        pauseMs = max(previous.pauseMs, pause)
-                    )
-                )
-            } else {
-                frames.add(KeyFrame(fraction, pause))
-            }
-        } else {
-            frames.add(KeyFrame(fraction, pause))
-        }
-
-        lastFraction = fraction
-    }
-
-    frames.add(KeyFrame(1f, 0))
-    return frames
 }
 
 private fun estimateMaskWidth(
-    svg: AndroidPath?,
+    svgPath: AndroidPath?,
     points: List<Offset>,
     canvasSizePx: Float
 ): Float {
     val bounds = RectF()
     var hasBounds = false
 
-    if (svg != null) {
+    if (svgPath != null) {
         try {
-            svg.computeBounds(bounds, true)
-            hasBounds = !bounds.isEmpty()
+            svgPath.computeBounds(bounds, true)
+            hasBounds = bounds.width() > 0.5f && bounds.height() > 0.5f
         } catch (_: Throwable) {
             hasBounds = false
         }
     }
 
     if (!hasBounds) {
-        if (points.isEmpty()) return canvasSizePx * 0.18f
+        if (points.isEmpty()) {
+            return canvasSizePx * 0.16f
+        }
 
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
@@ -264,18 +174,21 @@ private fun estimateMaskWidth(
     val perpX = -dy
     val perpY = dx
 
-    val w = if (bounds.isEmpty()) 0f else bounds.width()
-    val h = if (bounds.isEmpty()) 0f else bounds.height()
+    val w = bounds.width()
+    val h = bounds.height()
 
     val perpendicularExtent = abs(w * perpX) + abs(h * perpY)
     val diagonal = dist(w, h)
 
     val suggested = max(
-        perpendicularExtent * 1.85f + canvasSizePx * 0.035f,
-        diagonal * 0.16f + canvasSizePx * 0.08f
+        perpendicularExtent * 1.75f + canvasSizePx * 0.035f,
+        diagonal * 0.13f + canvasSizePx * 0.055f
     )
 
-    return suggested.coerceIn(canvasSizePx * 0.13f, canvasSizePx * 0.30f)
+    return suggested.coerceIn(
+        canvasSizePx * 0.115f,
+        canvasSizePx * 0.26f
+    )
 }
 
 @Composable
@@ -286,6 +199,7 @@ fun AnimationCanvas(
     autoPlay: Boolean = true,
     loop: Boolean = false,
     showGuide: Boolean = true,
+    useSvgFill: Boolean = true,
     onComplete: () -> Unit = {}
 ) {
     val density = LocalDensity.current
@@ -293,9 +207,10 @@ fun AnimationCanvas(
 
     val prepared = remember(medians, strokes, canvasSizePx) {
         if (medians.isEmpty()) {
-            emptyList<PreparedStroke>()
+            emptyList()
         } else {
             val scale = canvasSizePx / HanziTransform.GRID_WIDTH
+
             val count = if (strokes.isEmpty()) {
                 medians.size
             } else {
@@ -323,32 +238,30 @@ fun AnimationCanvas(
                     }
                 }
 
-                val rawPath = buildAndroidPath(points)
+                val medianPath = buildSmoothAndroidPath(points)
                 val measure = AndroidPathMeasure()
-                measure.setPath(rawPath, false)
+                measure.setPath(medianPath, false)
 
                 val length = measure.length
-                val cumulative = buildCumulative(points)
                 val maskWidth = estimateMaskWidth(svgAndroid, points, canvasSizePx)
-                val cornerBoost = buildCornerBoost(points, maskWidth)
-                val cornerDelay = buildCornerDelay(points)
-                val keyFrames = buildKeyFrames(cumulative, cornerDelay, length)
+                val isDot = points.size <= 1 || length < canvasSizePx * 0.045f
 
-                val isDot = points.size == 1 || length < canvasSizePx * 0.045f
+                val durationMs = if (isDot) {
+                    210
+                } else {
+                    val normalizedLength = (length / canvasSizePx).coerceIn(0f, 1.5f)
+                    (260 + normalizedLength * 420).toInt().coerceIn(260, 760)
+                }
 
                 result.add(
                     PreparedStroke(
                         svgPath = svgCompose,
-                        fallbackPath = buildComposePath(points),
+                        fallbackPath = buildSmoothComposePath(points),
+                        medianPath = medianPath,
                         measure = measure,
                         length = length,
-                        points = points,
-                        cumulative = cumulative,
-                        cornerBoost = cornerBoost,
-                        keyFrames = keyFrames,
                         maskWidth = maskWidth,
-                        startX = points.first().x,
-                        startY = points.first().y,
+                        durationMs = durationMs,
                         isDot = isDot
                     )
                 )
@@ -358,76 +271,37 @@ fun AnimationCanvas(
         }
     }
 
-    val progress = remember { Animatable(0f) }
-    var activeIndex by remember { mutableIntStateOf(0) }
-    var completedCount by remember { mutableIntStateOf(0) }
+    var activeIndex by remember(prepared) {
+        mutableIntStateOf(0)
+    }
 
-    LaunchedEffect(prepared, autoPlay, loop) {
+    val progress = remember(prepared) {
+        Animatable(0f)
+    }
+
+    LaunchedEffect(prepared, autoPlay, loop, useSvgFill) {
         if (!autoPlay || prepared.isEmpty()) return@LaunchedEffect
 
-        val startEasing = CubicBezierEasing(0.25f, 0.10f, 0.25f, 1.0f)
-        val endEasing = CubicBezierEasing(0.42f, 0.0f, 0.58f, 1.0f)
+        val easing = CubicBezierEasing(0.25f, 0.10f, 0.25f, 1.0f)
 
         while (true) {
             for (i in prepared.indices) {
                 val stroke = prepared[i]
 
                 activeIndex = i
-                completedCount = i
                 progress.snapTo(0f)
 
-                if (stroke.isDot || stroke.length <= 0f) {
-                    progress.animateTo(
-                        1f,
-                        tween(
-                            durationMillis = 260,
-                            easing = startEasing
-                        )
+                progress.animateTo(
+                    1f,
+                    tween(
+                        durationMillis = stroke.durationMs,
+                        easing = easing
                     )
-                } else {
-                    var previousFraction = 0f
+                )
 
-                    for (frame in stroke.keyFrames.drop(1)) {
-                        val targetFraction = frame.fraction.coerceIn(previousFraction, 1f)
+                activeIndex = i + 1
 
-                        if (targetFraction <= previousFraction + 0.002f) {
-                            if (frame.pauseMs > 0) {
-                                delay(frame.pauseMs.toLong())
-                            }
-                            previousFraction = max(previousFraction, targetFraction)
-                            continue
-                        }
-
-                        val segmentLength = (targetFraction - previousFraction) * stroke.length
-
-                        val duration = (segmentLength / (canvasSizePx * 0.00155f))
-                            .toInt()
-                            .coerceIn(45, 430)
-
-                        val easing = when {
-                            previousFraction == 0f -> startEasing
-                            targetFraction >= 0.998f -> endEasing
-                            else -> LinearEasing
-                        }
-
-                        progress.animateTo(
-                            targetFraction,
-                            tween(
-                                durationMillis = duration,
-                                easing = easing
-                            )
-                        )
-
-                        previousFraction = targetFraction
-
-                        if (frame.pauseMs > 0) {
-                            delay(frame.pauseMs.toLong())
-                        }
-                    }
-                }
-
-                completedCount = i + 1
-                delay(if (stroke.isDot) 80L else 110L)
+                delay(if (stroke.isDot) 55L else 85L)
             }
 
             if (!loop) {
@@ -435,19 +309,125 @@ fun AnimationCanvas(
                 break
             }
 
-            completedCount = 0
             activeIndex = 0
             progress.snapTo(0f)
-            delay(650L)
+            delay(500L)
         }
     }
 
-    val partial = remember { AndroidPath() }
-    val strokeFill = remember { AndroidPath() }
-    val clipAndroid = remember { AndroidPath() }
-    val cap = remember { AndroidPath() }
-    val pos = remember { FloatArray(2) }
-    val tan = remember { FloatArray(2) }
+    Box(
+        modifier = modifier.background(
+            MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        if (showGuide) {
+            GuideLayer(prepared = prepared)
+        }
+
+        CompletedLayer(
+            prepared = prepared,
+            completedCount = activeIndex,
+            useSvgFill = useSvgFill
+        )
+
+        CurrentLayer(
+            stroke = prepared.getOrNull(activeIndex),
+            progress = progress,
+            useSvgFill = useSvgFill
+        )
+    }
+}
+
+@Composable
+private fun GuideLayer(
+    prepared: List<PreparedStroke>
+) {
+    val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+        alpha = 0.10f
+    )
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val fallbackWidth = size.width * 0.07f
+
+        for (stroke in prepared) {
+            val svg = stroke.svgPath
+
+            if (svg != null) {
+                drawPath(
+                    svg,
+                    guideColor,
+                    style = Fill
+                )
+            } else {
+                drawPath(
+                    stroke.fallbackPath,
+                    guideColor,
+                    style = Stroke(
+                        width = fallbackWidth,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletedLayer(
+    prepared: List<PreparedStroke>,
+    completedCount: Int,
+    useSvgFill: Boolean
+) {
+    val inkColor = MaterialTheme.colorScheme.primary
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val count = completedCount.coerceIn(0, prepared.size)
+        val fallbackWidth = size.width * 0.078f
+
+        for (i in 0 until count) {
+            val stroke = prepared[i]
+            val svg = stroke.svgPath
+
+            if (useSvgFill && svg != null) {
+                drawPath(
+                    svg,
+                    inkColor,
+                    style = Fill
+                )
+            } else {
+                drawPath(
+                    stroke.fallbackPath,
+                    inkColor,
+                    style = Stroke(
+                        width = fallbackWidth,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentLayer(
+    stroke: PreparedStroke?,
+    progress: Animatable<Float, AnimationVector1D>,
+    useSvgFill: Boolean
+) {
+    if (stroke == null) return
+
+    val t = progress.value
+    val inkColor = MaterialTheme.colorScheme.primary
+
+    val partial = remember(stroke) {
+        AndroidPath()
+    }
+
+    val maskFill = remember(stroke) {
+        AndroidPath()
+    }
 
     val maskPaint = remember {
         Paint().apply {
@@ -458,60 +438,82 @@ fun AnimationCanvas(
         }
     }
 
-    val inkColor = MaterialTheme.colorScheme.primary
-    val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
-    val fallbackStrokeWidth = canvasSizePx * 0.085f
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val fallbackWidth = size.width * 0.078f
+        val svg = stroke.svgPath
 
-    Canvas(
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        if (showGuide) {
-            for (stroke in prepared) {
-                val svg = stroke.svgPath
+        if (useSvgFill && svg != null) {
+            if (stroke.isDot) {
+                val alpha = (0.15f + 0.85f * t).coerceIn(0f, 1f)
 
-                if (svg != null) {
-                    drawPath(svg, guideColor, style = Fill)
-                } else {
+                drawPath(
+                    svg,
+                    inkColor.copy(alpha = alpha),
+                    style = Fill
+                )
+            } else if (t >= 0.985f) {
+                drawPath(
+                    svg,
+                    inkColor,
+                    style = Fill
+                )
+            } else {
+                val distance = stroke.length * t
+
+                partial.reset()
+
+                val ok = stroke.measure.getSegment(
+                    0f,
+                    distance,
+                    partial,
+                    true
+                )
+
+                if (!ok) {
                     drawPath(
-                        stroke.fallbackPath,
-                        guideColor,
-                        style = Stroke(
-                            width = fallbackStrokeWidth * 0.75f,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round
-                        )
+                        svg,
+                        inkColor,
+                        style = Fill
                     )
+                } else {
+                    maskPaint.strokeWidth = stroke.maskWidth
+
+                    maskFill.reset()
+                    maskPaint.getFillPath(partial, maskFill)
+
+                    clipPath(maskFill.asComposePath()) {
+                        drawPath(
+                            svg,
+                            inkColor,
+                            style = Fill
+                        )
+                    }
                 }
             }
-        }
+        } else {
+            if (stroke.isDot) {
+                val alpha = (0.15f + 0.85f * t).coerceIn(0f, 1f)
 
-        val completed = completedCount.coerceIn(0, prepared.size)
-
-        for (i in 0 until completed) {
-            val stroke = prepared[i]
-            val svg = stroke.svgPath
-
-            if (svg != null) {
-                drawPath(svg, inkColor, style = Fill)
-            } else {
                 drawPath(
                     stroke.fallbackPath,
-                    inkColor,
+                    inkColor.copy(alpha = alpha),
                     style = Stroke(
-                        width = fallbackStrokeWidth,
+                        width = fallbackWidth,
                         cap = StrokeCap.Round,
                         join = StrokeJoin.Round
                     )
                 )
-            }
-        }
-
-        if (activeIndex < prepared.size && completedCount == activeIndex) {
-            val stroke = prepared[activeIndex]
-            val t = progress.value.coerceIn(0f, 1f)
-            val svg = stroke.svgPath
-
-            if (svg == null) {
+            } else if (t >= 0.99f) {
+                drawPath(
+                    stroke.fallbackPath,
+                    inkColor,
+                    style = Stroke(
+                        width = fallbackWidth,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                )
+            } else {
                 partial.reset()
 
                 val ok = stroke.measure.getSegment(
@@ -526,114 +528,11 @@ fun AnimationCanvas(
                         partial.asComposePath(),
                         inkColor,
                         style = Stroke(
-                            width = fallbackStrokeWidth,
+                            width = fallbackWidth,
                             cap = StrokeCap.Round,
                             join = StrokeJoin.Round
                         )
                     )
-                }
-            } else if (stroke.isDot) {
-                if (t >= 0.92f) {
-                    drawPath(svg, inkColor, style = Fill)
-                } else {
-                    val radius = stroke.maskWidth * (0.20f + 1.15f * t)
-
-                    clipAndroid.reset()
-                    clipAndroid.fillType = AndroidPath.FillType.WINDING
-                    clipAndroid.addCircle(
-                        stroke.startX,
-                        stroke.startY,
-                        radius,
-                        AndroidPath.Direction.CW
-                    )
-
-                    clipPath(clipAndroid.asComposePath()) {
-                        drawPath(svg, inkColor, style = Fill)
-                    }
-                }
-            } else {
-                val baseDistance = stroke.length * t
-
-                val tail = if (t > 0.72f) {
-                    ((t - 0.72f) / 0.28f) * stroke.maskWidth * 0.55f
-                } else {
-                    0f
-                }
-
-                val distance = (baseDistance + tail).coerceIn(0f, stroke.length)
-
-                if (t >= 0.95f || distance >= stroke.length - 0.75f) {
-                    drawPath(svg, inkColor, style = Fill)
-                } else {
-                    partial.reset()
-
-                    val ok = stroke.measure.getSegment(
-                        0f,
-                        distance,
-                        partial,
-                        true
-                    )
-
-                    if (!ok) {
-                        drawPath(svg, inkColor, style = Fill)
-                    } else {
-                        maskPaint.strokeWidth = stroke.maskWidth
-
-                        strokeFill.reset()
-                        maskPaint.getFillPath(partial, strokeFill)
-
-                        clipAndroid.reset()
-                        clipAndroid.fillType = AndroidPath.FillType.WINDING
-                        clipAndroid.addPath(strokeFill)
-
-                        cap.reset()
-                        cap.fillType = AndroidPath.FillType.WINDING
-                        cap.addCircle(
-                            stroke.startX,
-                            stroke.startY,
-                            stroke.maskWidth * 0.70f,
-                            AndroidPath.Direction.CW
-                        )
-                        clipAndroid.addUnion(cap)
-
-                        for (idx in stroke.points.indices) {
-                            val boost = stroke.cornerBoost[idx]
-
-                            if (boost > 0f && stroke.cumulative[idx] <= distance + 2f) {
-                                cap.reset()
-                                cap.fillType = AndroidPath.FillType.WINDING
-                                cap.addCircle(
-                                    stroke.points[idx].x,
-                                    stroke.points[idx].y,
-                                    boost,
-                                    AndroidPath.Direction.CW
-                                )
-                                clipAndroid.addUnion(cap)
-                            }
-                        }
-
-                        if (stroke.measure.getPosTan(distance, pos, tan)) {
-                            val tipBoost = if (t > 0.62f) {
-                                ((t - 0.62f) / 0.38f) * stroke.maskWidth * 0.78f
-                            } else {
-                                0f
-                            }
-
-                            cap.reset()
-                            cap.fillType = AndroidPath.FillType.WINDING
-                            cap.addCircle(
-                                pos[0],
-                                pos[1],
-                                stroke.maskWidth * 0.72f + tipBoost,
-                                AndroidPath.Direction.CW
-                            )
-                            clipAndroid.addUnion(cap)
-                        }
-
-                        clipPath(clipAndroid.asComposePath()) {
-                            drawPath(svg, inkColor, style = Fill)
-                        }
-                    }
                 }
             }
         }
