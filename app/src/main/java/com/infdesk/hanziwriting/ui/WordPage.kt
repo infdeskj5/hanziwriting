@@ -196,7 +196,8 @@ fun WordPage(
                                     autoPlay = true,
                                     loop = true,
                                     showGuide = true,
-                                    useSvgFill = false,
+                                    useSvgFill = true,
+                                    frameDelayMs = 40,
                                     onComplete = {}
                                 )
                             } else {
