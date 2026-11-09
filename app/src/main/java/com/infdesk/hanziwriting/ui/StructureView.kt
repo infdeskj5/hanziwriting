@@ -2,7 +2,13 @@ package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,11 +32,11 @@ fun StructureView(
         modifier = modifier
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
                 shape = RoundedCornerShape(16.dp)
             )
             .background(
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.18f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.16f),
                 RoundedCornerShape(16.dp)
             )
             .padding(12.dp)
@@ -321,41 +327,64 @@ private fun LeafBox(
         else -> 0
     }
 
-    val fill = when {
-        state == 2 -> if (frame) primary.copy(alpha = 0.28f) else primary
-        state == 1 -> if (frame) primary.copy(alpha = 0.12f) else primary.copy(alpha = 0.16f)
+    val fill = when (state) {
+        2 -> if (frame) {
+            primary.copy(alpha = 0.24f)
+        } else {
+            primary
+        }
+
+        1 -> if (frame) {
+            primary.copy(alpha = 0.07f)
+        } else {
+            primary.copy(alpha = 0.10f)
+        }
+
         else -> Color.Transparent
     }
 
-    val borderColor = when {
-        state == 2 -> primary
-        state == 1 -> primary.copy(alpha = 0.75f)
-        else -> outline
+    val borderColor = when (state) {
+        2 -> primary
+        1 -> primary.copy(alpha = 0.55f)
+        else -> outline.copy(alpha = 0.35f)
     }
 
     val borderWidth = if (frame) 3.dp else 2.dp
 
-    val textColor = when {
-        state == 2 -> if (frame) primary else onPrimary
-        state == 1 -> primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f)
-    }
-
     Box(
         modifier = modifier
             .padding(3.dp)
-            .border(borderWidth, borderColor, RoundedCornerShape(8.dp))
-            .background(fill, RoundedCornerShape(8.dp)),
-        contentAlignment = if (frame) Alignment.TopCenter else Alignment.Center
+            .border(
+                width = borderWidth,
+                color = borderColor,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .background(
+                color = fill,
+                shape = RoundedCornerShape(8.dp)
+            ),
+        contentAlignment = if (frame) {
+            Alignment.TopCenter
+        } else {
+            Alignment.Center
+        }
     ) {
-        Text(
-            leaf.char.toString(),
-            style = if (frame) {
-                MaterialTheme.typography.labelLarge
-            } else {
-                MaterialTheme.typography.titleMedium
-            },
-            color = textColor
-        )
+        // Important: only show the character after it has been selected.
+        // This prevents the structure view from revealing the answer.
+        if (state == 2) {
+            Text(
+                leaf.char.toString(),
+                style = if (frame) {
+                    MaterialTheme.typography.labelLarge
+                } else {
+                    MaterialTheme.typography.titleMedium
+                },
+                color = if (frame) {
+                    primary
+                } else {
+                    onPrimary
+                }
+            )
+        }
     }
 }
