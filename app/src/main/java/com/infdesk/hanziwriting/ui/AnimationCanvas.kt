@@ -1,5 +1,7 @@
 package com.infdesk.hanziwriting.ui
 
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
 import android.graphics.Path as AndroidPath
@@ -9,12 +11,9 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +30,7 @@ import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.PI
@@ -42,9 +42,12 @@ private class PreparedStroke(
     val measure: AndroidPathMeasure,
     val length: Float,
     val maskWidth: Float,
+    val penWidth: Float,
     val durationMs: Int,
     val pauseMs: Int,
     val isDot: Boolean,
+    val startX: Float,
+    val startY: Float,
     val layerLeft: Float,
     val layerTop: Float,
     val layerRight: Float,
@@ -181,6 +184,7 @@ fun AnimationCanvas(
 ) {
     val density = LocalDensity.current
     val canvasSizePx = with(density) { 100.dp.toPx() }
+    val bitmapSize = ceil(canvasSizePx).toInt().coerceAtLeast(1)
     val safeFrameDelay = frameDelayMs.coerceIn(16, 80)
 
     val prepared = remember(medians, strokes, canvasSizePx) {
@@ -244,8 +248,13 @@ fun AnimationCanvas(
                 }
 
                 val maskWidth = estimateMaskWidth(bounds, canvasSizePx)
-                val turns = turnAmount(points)
+                val penWidth = if (svg != null) {
+                    maskWidth * 0.92f
+                } else {
+                    canvasSizePx * 0.075f
+                }
 
+                val turns = turnAmount(points)
                 val isDot = points.size <= 1 || length < canvasSizePx * 0.05f
 
                 val durationMs = if (isDot) {
@@ -258,13 +267,12 @@ fun AnimationCanvas(
 
                 val pauseMs = if (isDot) 45 else 75
 
-                val layerInset = maskWidth * 1.45f + 10f
-                bounds.inflate(layerInset, layerInset)
+                val inset = maskWidth * 1.45f + 10f
 
-                val left = max(0f, bounds.left)
-                val top = max(0f, bounds.top)
-                val right = min(canvasSizePx, bounds.right)
-                val bottom = min(canvasSizePx, bounds.bottom)
+                val layerLeft = max(0f, bounds.left - inset)
+                val layerTop = max(0f, bounds.top - inset)
+                val layerRight = min(canvasSizePx, bounds.right + inset)
+                val layerBottom = min(canvasSizePx, bounds.bottom + inset)
 
                 out.add(
                     PreparedStroke(
@@ -273,13 +281,16 @@ fun AnimationCanvas(
                         measure = measure,
                         length = length,
                         maskWidth = maskWidth,
+                        penWidth = penWidth,
                         durationMs = durationMs,
                         pauseMs = pauseMs,
                         isDot = isDot,
-                        layerLeft = left,
-                        layerTop = top,
-                        layerRight = right,
-                        layerBottom = bottom
+                        startX = points.first().x,
+                        startY = points.first().y,
+                        layerLeft = layerLeft,
+                        layerTop = layerTop,
+                        layerRight = layerRight,
+                        layerBottom = layerBottom
                     )
                 )
             }
@@ -288,33 +299,160 @@ fun AnimationCanvas(
         }
     }
 
+    val guideColor = MaterialTheme.colorScheme.onSurfaceVariant
+        .copy(alpha = 0.22f)
+        .toArgb()
+
+    val inkColor = MaterialTheme.colorScheme.primary.toArgb()
+
+    val guideBitmap = remember(prepared, bitmapSize, guideColor) {
+        val bmp = Bitmap.createBitmap(
+            bitmapSize,
+            bitmapSize,
+            Bitmap.Config.ARGB_8888
+        )
+
+        val canvas = AndroidCanvas(bmp)
+
+        val fillPaint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = guideColor
+        }
+
+        val strokePaint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = guideColor
+        }
+
+        for (stroke in prepared) {
+            val svg = stroke.svg
+
+            if (svg != null) {
+                canvas.drawPath(svg, fillPaint)
+            } else if (stroke.isDot) {
+                canvas.drawCircle(
+                    stroke.startX,
+                    stroke.startY,
+                    stroke.penWidth * 0.5f,
+                    fillPaint
+                )
+            } else {
+                strokePaint.strokeWidth = stroke.penWidth * 0.85f
+                canvas.drawPath(stroke.median, strokePaint)
+            }
+        }
+
+        bmp
+    }
+
+    val completedBitmap = remember(prepared, bitmapSize) {
+        Bitmap.createBitmap(
+            bitmapSize,
+            bitmapSize,
+            Bitmap.Config.ARGB_8888
+        )
+    }
+
+    val completedCanvas = remember(completedBitmap) {
+        AndroidCanvas(completedBitmap)
+    }
+
+    val drawCompleted: (Int) -> Unit = remember(
+        prepared,
+        completedCanvas,
+        inkColor,
+        bitmapSize
+    ) {
+        val fillPaint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+            color = inkColor
+        }
+
+        val strokePaint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = inkColor
+        }
+
+        { index ->
+            if (index in prepared.indices) {
+                val stroke = prepared[index]
+                val svg = stroke.svg
+
+                if (svg != null) {
+                    completedCanvas.drawPath(svg, fillPaint)
+                } else if (stroke.isDot) {
+                    completedCanvas.drawCircle(
+                        stroke.startX,
+                        stroke.startY,
+                        stroke.penWidth * 0.5f,
+                        fillPaint
+                    )
+                } else {
+                    strokePaint.strokeWidth = stroke.penWidth
+                    completedCanvas.drawPath(stroke.median, strokePaint)
+                }
+            }
+        }
+    }
+
     var currentStroke by remember(prepared) {
         mutableIntStateOf(0)
     }
 
-    val progressState = remember(prepared) {
+    val progress = remember(prepared) {
         mutableStateOf(0f)
     }
 
-    LaunchedEffect(prepared, autoPlay, loop, safeFrameDelay) {
-        if (!autoPlay || prepared.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(prepared, completedBitmap) {
+        completedBitmap.eraseColor(AndroidColor.TRANSPARENT)
+    }
+
+    LaunchedEffect(
+        prepared,
+        autoPlay,
+        loop,
+        safeFrameDelay,
+        drawCompleted,
+        completedBitmap
+    ) {
+        if (!autoPlay) return@LaunchedEffect
+
+        if (prepared.isEmpty()) {
+            onComplete()
+            return@LaunchedEffect
+        }
 
         while (true) {
+            completedBitmap.eraseColor(AndroidColor.TRANSPARENT)
+            currentStroke = 0
+            progress.value = 0f
+
             for (i in prepared.indices) {
                 val stroke = prepared[i]
 
                 currentStroke = i
-                progressState.value = 0f
+                progress.value = 0f
 
-                val frames = max(4, stroke.durationMs / safeFrameDelay)
+                val frames = max(6, stroke.durationMs / safeFrameDelay)
 
                 for (frame in 1..frames) {
                     val linear = frame.toFloat() / frames.toFloat()
-                    progressState.value = easeInOutCubic(linear)
+                    progress.value = easeInOutCubic(linear)
                     delay(safeFrameDelay.toLong())
                 }
 
-                progressState.value = 1f
+                progress.value = 1f
+
+                drawCompleted(i)
+
                 currentStroke = i + 1
 
                 delay(stroke.pauseMs.toLong())
@@ -325,94 +463,15 @@ fun AnimationCanvas(
                 break
             }
 
-            currentStroke = 0
-            progressState.value = 0f
-
             delay(500L)
         }
     }
 
-    Box(
-        modifier = modifier.background(
-            MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        if (showGuide) {
-            GuideLayer(
-                prepared = prepared,
-                canvasSizePx = canvasSizePx
-            )
-        }
-
-        CompletedLayer(
-            prepared = prepared,
-            completedCount = currentStroke,
-            canvasSizePx = canvasSizePx
-        )
-
-        CurrentLayer(
-            stroke = prepared.getOrNull(currentStroke),
-            progress = progressState,
-            useSvgFill = useSvgFill,
-            canvasSizePx = canvasSizePx
-        )
-    }
-}
-
-@Composable
-private fun GuideLayer(
-    prepared: List<PreparedStroke>,
-    canvasSizePx: Float
-) {
-    val guideColor = MaterialTheme.colorScheme.onSurfaceVariant
-        .copy(alpha = 0.22f)
-        .toArgb()
-
-    val fillPaint = remember(guideColor) {
-        Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.FILL
-            color = guideColor
-        }
+    val workPath = remember(prepared) {
+        AndroidPath()
     }
 
-    val strokePaint = remember(guideColor, canvasSizePx) {
-        Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-            color = guideColor
-            strokeWidth = canvasSizePx * 0.075f
-        }
-    }
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawIntoCanvas { canvas ->
-            val nativeCanvas = canvas.nativeCanvas
-
-            for (stroke in prepared) {
-                val svg = stroke.svg
-
-                if (svg != null) {
-                    nativeCanvas.drawPath(svg, fillPaint)
-                } else {
-                    nativeCanvas.drawPath(stroke.median, strokePaint)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompletedLayer(
-    prepared: List<PreparedStroke>,
-    completedCount: Int,
-    canvasSizePx: Float
-) {
-    val inkColor = MaterialTheme.colorScheme.primary.toArgb()
-
-    val fillPaint = remember(inkColor) {
+    val currentInkFill = remember(inkColor) {
         Paint().apply {
             isAntiAlias = true
             style = Paint.Style.FILL
@@ -420,57 +479,7 @@ private fun CompletedLayer(
         }
     }
 
-    val strokePaint = remember(inkColor, canvasSizePx) {
-        Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-            color = inkColor
-            strokeWidth = canvasSizePx * 0.082f
-        }
-    }
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawIntoCanvas { canvas ->
-            val nativeCanvas = canvas.nativeCanvas
-
-            val count = completedCount.coerceIn(0, prepared.size)
-
-            for (i in 0 until count) {
-                val stroke = prepared[i]
-                val svg = stroke.svg
-
-                if (svg != null) {
-                    nativeCanvas.drawPath(svg, fillPaint)
-                } else {
-                    nativeCanvas.drawPath(stroke.median, strokePaint)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CurrentLayer(
-    stroke: PreparedStroke?,
-    progress: MutableState<Float>,
-    useSvgFill: Boolean,
-    canvasSizePx: Float
-) {
-    if (stroke == null) return
-
-    val inkColor = MaterialTheme.colorScheme.primary.toArgb()
-
-    val fillPaint = remember(inkColor) {
-        Paint().apply {
-            isAntiAlias = true
-            style = Paint.Style.FILL
-            color = inkColor
-        }
-    }
-
-    val inkStrokePaint = remember(inkColor) {
+    val currentInkStroke = remember(inkColor) {
         Paint().apply {
             isAntiAlias = true
             style = Paint.Style.STROKE
@@ -491,66 +500,108 @@ private fun CurrentLayer(
         }
     }
 
-    val workPath = remember(stroke) {
-        AndroidPath()
-    }
+    Canvas(
+        modifier = modifier.background(
+            MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        val nativeCanvas = drawContext.canvas.nativeCanvas
 
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawIntoCanvas { canvas ->
-            val nativeCanvas = canvas.nativeCanvas
+        if (showGuide) {
+            nativeCanvas.drawBitmap(guideBitmap, 0f, 0f, null)
+        }
+
+        nativeCanvas.drawBitmap(completedBitmap, 0f, 0f, null)
+
+        if (autoPlay && currentStroke < prepared.size) {
+            val stroke = prepared[currentStroke]
             val t = progress.value.coerceIn(0f, 1f)
             val svg = stroke.svg
 
-            if (svg == null || !useSvgFill) {
-                workPath.reset()
+            if (svg != null && useSvgFill) {
+                if (stroke.isDot) {
+                    val oldAlpha = currentInkFill.alpha
+                    currentInkFill.alpha = (255f * t).toInt().coerceIn(0, 255)
+                    nativeCanvas.drawPath(svg, currentInkFill)
+                    currentInkFill.alpha = oldAlpha
+                } else if (t >= 0.985f) {
+                    nativeCanvas.drawPath(svg, currentInkFill)
+                } else if (t > 0.01f) {
+                    val distance = stroke.length * t
 
-                if (stroke.measure.getSegment(
+                    workPath.reset()
+
+                    val ok = stroke.measure.getSegment(
+                        0f,
+                        distance,
+                        workPath,
+                        true
+                    )
+
+                    if (!ok) {
+                        nativeCanvas.drawPath(svg, currentInkFill)
+                    } else {
+                        val left = stroke.layerLeft
+                        val top = stroke.layerTop
+                        val right = stroke.layerRight
+                        val bottom = stroke.layerBottom
+
+                        if (right <= left || bottom <= top) {
+                            nativeCanvas.drawPath(svg, currentInkFill)
+                        } else {
+                            nativeCanvas.saveLayer(
+                                left,
+                                top,
+                                right,
+                                bottom,
+                                null
+                            )
+
+                            nativeCanvas.drawPath(svg, currentInkFill)
+
+                            maskPaint.strokeWidth = stroke.maskWidth
+                            nativeCanvas.drawPath(workPath, maskPaint)
+
+                            nativeCanvas.restore()
+                        }
+                    }
+                }
+            } else {
+                if (stroke.isDot) {
+                    val oldAlpha = currentInkFill.alpha
+                    currentInkFill.alpha = (255f * t).toInt().coerceIn(0, 255)
+
+                    val radius = stroke.penWidth * 0.5f * (0.35f + 0.65f * t)
+
+                    nativeCanvas.drawCircle(
+                        stroke.startX,
+                        stroke.startY,
+                        radius,
+                        currentInkFill
+                    )
+
+                    currentInkFill.alpha = oldAlpha
+                } else if (t >= 0.99f) {
+                    if (svg != null) {
+                        nativeCanvas.drawPath(svg, currentInkFill)
+                    } else {
+                        currentInkStroke.strokeWidth = stroke.penWidth
+                        nativeCanvas.drawPath(stroke.median, currentInkStroke)
+                    }
+                } else if (t > 0.01f) {
+                    workPath.reset()
+
+                    val ok = stroke.measure.getSegment(
                         0f,
                         stroke.length * t,
                         workPath,
                         true
                     )
-                ) {
-                    inkStrokePaint.strokeWidth = stroke.maskWidth * 0.95f
-                    nativeCanvas.drawPath(workPath, inkStrokePaint)
-                }
-            } else if (stroke.isDot || stroke.length < canvasSizePx * 0.055f) {
-                fillPaint.alpha = (35 + 220 * t).toInt().coerceIn(0, 255)
-                nativeCanvas.drawPath(svg, fillPaint)
-                fillPaint.alpha = 255
-            } else if (t >= 0.985f) {
-                nativeCanvas.drawPath(svg, fillPaint)
-            } else {
-                workPath.reset()
 
-                val ok = stroke.measure.getSegment(
-                    0f,
-                    stroke.length * t,
-                    workPath,
-                    true
-                )
-
-                if (
-                    !ok ||
-                    stroke.layerRight <= stroke.layerLeft ||
-                    stroke.layerBottom <= stroke.layerTop
-                ) {
-                    nativeCanvas.drawPath(svg, fillPaint)
-                } else {
-                    nativeCanvas.saveLayer(
-                        stroke.layerLeft,
-                        stroke.layerTop,
-                        stroke.layerRight,
-                        stroke.layerBottom,
-                        null
-                    )
-
-                    nativeCanvas.drawPath(svg, fillPaint)
-
-                    maskPaint.strokeWidth = stroke.maskWidth
-                    nativeCanvas.drawPath(workPath, maskPaint)
-
-                    nativeCanvas.restore()
+                    if (ok) {
+                        currentInkStroke.strokeWidth = stroke.penWidth
+                        nativeCanvas.drawPath(workPath, currentInkStroke)
+                    }
                 }
             }
         }
