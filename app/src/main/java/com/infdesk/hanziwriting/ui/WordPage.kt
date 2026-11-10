@@ -194,10 +194,10 @@ fun WordPage(
                                     strokes = charProgress.strokes,
                                     modifier = Modifier.size(100.dp),
                                     autoPlay = true,
-                                    loop = true,
+                                    loop = false,
                                     showGuide = true,
-                                    useSvgFill = false,
-                                    frameDelayMs = 55,
+                                    useSvgFill = true,
+                                    frameDelayMs = 16,
                                     onComplete = {}
                                 )
                             } else {
