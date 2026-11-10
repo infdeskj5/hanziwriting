@@ -2,7 +2,10 @@ package com.infdesk.hanziwriting.ui
 
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Color as AndroidColor
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import android.graphics.RectF
@@ -11,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -202,7 +206,7 @@ fun AnimationCanvas(
                     bounds.set(0f, 0f, canvasSizePx, canvasSizePx)
                 }
 
-                val maskWidth = estimateMaskWidth(bounds, canvasSizePx)
+                val maskWidth = max(estimateMaskWidth(bounds, canvasSizePx), canvasSizePx * 0.18f)
                 val penWidth = if (svg != null) maskWidth * 0.92f else canvasSizePx * 0.075f
                 val isDot = points.size <= 1 || length < canvasSizePx * 0.05f
                 val turns = turnAmount(points)
@@ -303,12 +307,38 @@ fun AnimationCanvas(
             color = inkColor
         }
     }
-    val revealPaint = remember {
+    // A pair of tiny software bitmaps is used for the active stroke only.
+    // This avoids Mali/GPU clipPath artefacts while keeping the full SVG shape.
+    val activeBitmap = remember(bitmapSize) {
+        Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888)
+    }
+    val maskBitmap = remember(bitmapSize) {
+        Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888)
+    }
+    val activeBitmapCanvas = remember(activeBitmap) { AndroidCanvas(activeBitmap) }
+    val maskBitmapCanvas = remember(maskBitmap) { AndroidCanvas(maskBitmap) }
+
+    DisposableEffect(activeBitmap, maskBitmap) {
+        onDispose {
+            if (!activeBitmap.isRecycled) activeBitmap.recycle()
+            if (!maskBitmap.isRecycled) maskBitmap.recycle()
+        }
+    }
+
+    val maskStrokePaint = remember {
         Paint().apply {
             isAntiAlias = true
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
+            color = AndroidColor.WHITE
+        }
+    }
+    val dstInPaint = remember {
+        Paint().apply {
+            isAntiAlias = false
+            isFilterBitmap = false
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
         }
     }
 
@@ -365,7 +395,6 @@ fun AnimationCanvas(
     }
 
     val workPath = remember(prepared) { AndroidPath() }
-    val revealPath = remember(prepared) { AndroidPath() }
 
     Canvas(
         modifier = modifier
@@ -375,9 +404,8 @@ fun AnimationCanvas(
         val canvas = drawContext.canvas.nativeCanvas
         if (showGuide) canvas.drawBitmap(guideBitmap, 0f, 0f, null)
 
-        // Draw completed paths directly from the source vectors. Do not use a
-        // mutable completedBitmap: its pixels can change without a Compose
-        // invalidation, which caused flashes and delayed terminal completion.
+        // Finished strokes are always rendered as their complete source SVGs.
+        // This guarantees that tapered ends remain visible throughout the pause.
         val completedCount = currentStroke.coerceIn(0, prepared.size)
         for (index in 0 until completedCount) {
             val stroke = prepared[index]
@@ -402,51 +430,60 @@ fun AnimationCanvas(
             val svg = stroke.svg
 
             if (svg != null && useSvgFill) {
-                if (stroke.isDot) {
-                    val oldAlpha = inkFillPaint.alpha
-                    inkFillPaint.alpha = (255f * t).toInt().coerceIn(0, 255)
-                    canvas.drawPath(svg, inkFillPaint)
-                    inkFillPaint.alpha = oldAlpha
-                } else if (t >= 0.985f) {
-                    // Draw the complete SVG during the final animation frame.
-                    canvas.drawPath(svg, inkFillPaint)
-                } else if (t > 0.01f) {
-                    workPath.reset()
-                    revealPath.reset()
-
-                    if (stroke.measure.getSegment(0f, stroke.length * t, workPath, true)) {
-                        revealPaint.strokeWidth = stroke.maskWidth
-                        if (revealPaint.getFillPath(workPath, revealPath)) {
-                            val saveCount = canvas.save()
-                            canvas.clipPath(revealPath)
-                            canvas.drawPath(svg, inkFillPaint)
-                            canvas.restoreToCount(saveCount)
+                when {
+                    stroke.isDot -> {
+                        val oldAlpha = inkFillPaint.alpha
+                        inkFillPaint.alpha = (255f * t).toInt().coerceIn(0, 255)
+                        canvas.drawPath(svg, inkFillPaint)
+                        inkFillPaint.alpha = oldAlpha
+                    }
+                    // Do not leave the tip dependent on how closely the median
+                    // matches the SVG outline. Reveal the exact shape at the end.
+                    t >= 0.975f -> canvas.drawPath(svg, inkFillPaint)
+                    t > 0.005f -> {
+                        workPath.reset()
+                        if (stroke.measure.getSegment(0f, stroke.length * t, workPath, true)) {
+                            // Render the SVG and its moving alpha mask into a small
+                            // software bitmap. DST_IN is applied with a full-size
+                            // mask bitmap, so transparent pixels outside the brush
+                            // path correctly clear the SVG as well.
+                            activeBitmap.eraseColor(AndroidColor.TRANSPARENT)
+                            maskBitmap.eraseColor(AndroidColor.TRANSPARENT)
+                            activeBitmapCanvas.drawPath(svg, inkFillPaint)
+                            maskStrokePaint.strokeWidth = stroke.maskWidth
+                            maskBitmapCanvas.drawPath(workPath, maskStrokePaint)
+                            activeBitmapCanvas.drawBitmap(maskBitmap, 0f, 0f, dstInPaint)
+                            canvas.drawBitmap(activeBitmap, 0f, 0f, null)
                         }
                     }
                 }
             } else {
-                if (stroke.isDot) {
-                    val oldAlpha = inkFillPaint.alpha
-                    inkFillPaint.alpha = (255f * t).toInt().coerceIn(0, 255)
-                    canvas.drawCircle(
-                        stroke.startX,
-                        stroke.startY,
-                        stroke.penWidth * 0.5f * (0.35f + 0.65f * t),
-                        inkFillPaint
-                    )
-                    inkFillPaint.alpha = oldAlpha
-                } else if (t >= 0.99f) {
-                    if (svg != null) {
-                        canvas.drawPath(svg, inkFillPaint)
-                    } else {
-                        inkStrokePaint.strokeWidth = stroke.penWidth
-                        canvas.drawPath(stroke.median, inkStrokePaint)
+                when {
+                    stroke.isDot -> {
+                        val oldAlpha = inkFillPaint.alpha
+                        inkFillPaint.alpha = (255f * t).toInt().coerceIn(0, 255)
+                        canvas.drawCircle(
+                            stroke.startX,
+                            stroke.startY,
+                            stroke.penWidth * 0.5f * (0.35f + 0.65f * t),
+                            inkFillPaint
+                        )
+                        inkFillPaint.alpha = oldAlpha
                     }
-                } else if (t > 0.01f) {
-                    workPath.reset()
-                    if (stroke.measure.getSegment(0f, stroke.length * t, workPath, true)) {
-                        inkStrokePaint.strokeWidth = stroke.penWidth
-                        canvas.drawPath(workPath, inkStrokePaint)
+                    t >= 0.99f -> {
+                        if (svg != null) {
+                            canvas.drawPath(svg, inkFillPaint)
+                        } else {
+                            inkStrokePaint.strokeWidth = stroke.penWidth
+                            canvas.drawPath(stroke.median, inkStrokePaint)
+                        }
+                    }
+                    t > 0.005f -> {
+                        workPath.reset()
+                        if (stroke.measure.getSegment(0f, stroke.length * t, workPath, true)) {
+                            inkStrokePaint.strokeWidth = stroke.penWidth
+                            canvas.drawPath(workPath, inkStrokePaint)
+                        }
                     }
                 }
             }
