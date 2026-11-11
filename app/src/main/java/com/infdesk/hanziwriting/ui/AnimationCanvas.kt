@@ -377,8 +377,12 @@ fun AnimationCanvas(
                 // Move the stroke into the completed range. The Canvas now
                 // draws its entire SVG path, not the last clipped animation
                 // frame, so narrow terminals (e.g. 心 in 慈) cannot remain clipped.
-                progress.value = 1f
+                // Promote the just-finished stroke to the completed range and
+                // reset progress in the SAME frame-state handoff. Otherwise,
+                // the next stroke briefly inherits progress == 1f and flashes
+                // fully drawn before its own animation resets to zero.
                 currentStroke = index + 1
+                progress.value = 0f
                 withFrameNanos { }
 
                 // Completed strokes remain visible for the whole pause above
