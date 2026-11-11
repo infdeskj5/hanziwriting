@@ -273,8 +273,8 @@ fun PracticeScreen(
                 }
             }
         } else {
-            // Keep the status panel and the Done action in one footer row.
-            // This prevents the action from consuming an additional row of vertical space.
+            // Keep the status panel and the action in one footer row.
+            // Done and Finish share the same size, position, and Material 3 styling.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -296,24 +296,23 @@ fun PracticeScreen(
                     )
                 }
 
-                if (viewModel.waitingForNext) {
+                if (viewModel.waitingForNext || viewModel.isAllComplete) {
                     Spacer(modifier = Modifier.weight(1f))
 
                     Button(
-                        onClick = { viewModel.proceedNext() },
-                        modifier = Modifier.height(40.dp),
+                        onClick = {
+                            if (viewModel.isAllComplete) onBackClick()
+                            else viewModel.proceedNext()
+                        },
+                        modifier = Modifier.size(width = 88.dp, height = 40.dp),
                         shape = MaterialTheme.shapes.large,
                         contentPadding = PaddingValues(
                             horizontal = 20.dp,
                             vertical = 0.dp
-                        ),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     ) {
                         Text(
-                            "Done",
+                            if (viewModel.isAllComplete) "Finish!" else "Done",
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -321,9 +320,11 @@ fun PracticeScreen(
             }
         }
 
-        if (viewModel.waitingForNext && phase == PracticePhase.STRUCTURE_QUIZ) {
-            // The structure quiz has no Stroke/Errors panel, so align Done at the
-            // same footer position without introducing a full-width button row.
+        if (phase == PracticePhase.STRUCTURE_QUIZ &&
+            (viewModel.waitingForNext || viewModel.isAllComplete)
+        ) {
+            // The structure quiz has no Stroke/Errors panel; keep its action
+            // aligned to the same bottom-right footer position.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -332,37 +333,22 @@ fun PracticeScreen(
             ) {
                 Spacer(modifier = Modifier.weight(1f))
                 Button(
-                    onClick = { viewModel.proceedNext() },
-                    modifier = Modifier.height(40.dp),
+                    onClick = {
+                        if (viewModel.isAllComplete) onBackClick()
+                        else viewModel.proceedNext()
+                    },
+                    modifier = Modifier.size(width = 88.dp, height = 40.dp),
                     shape = MaterialTheme.shapes.large,
                     contentPadding = PaddingValues(
                         horizontal = 20.dp,
                         vertical = 0.dp
-                    ),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 ) {
                     Text(
-                        "Done",
+                        if (viewModel.isAllComplete) "Finish!" else "Done",
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
-            }
-        } else if (!viewModel.waitingForNext && viewModel.isAllComplete) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-            ) {
-                Text(
-                    "Finish!",
-                    style = MaterialTheme.typography.titleMedium
-                )
             }
         }
     }
