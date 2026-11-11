@@ -273,9 +273,12 @@ fun PracticeScreen(
                 }
             }
         } else {
+            // Keep the status panel and the Done action in one footer row.
+            // This prevents the action from consuming an additional row of vertical space.
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
@@ -292,28 +295,62 @@ fun PracticeScreen(
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
+
+                if (viewModel.waitingForNext) {
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    Button(
+                        onClick = { viewModel.proceedNext() },
+                        modifier = Modifier.height(40.dp),
+                        shape = MaterialTheme.shapes.large,
+                        contentPadding = PaddingValues(
+                            horizontal = 20.dp,
+                            vertical = 0.dp
+                        ),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        Text(
+                            "Done",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
             }
         }
 
-        if (viewModel.waitingForNext) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = { viewModel.proceedNext() },
+        if (viewModel.waitingForNext && phase == PracticePhase.STRUCTURE_QUIZ) {
+            // The structure quiz has no Stroke/Errors panel, so align Done at the
+            // same footer position without introducing a full-width button row.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                    .heightIn(min = 48.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Done",
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Spacer(modifier = Modifier.weight(1f))
+                Button(
+                    onClick = { viewModel.proceedNext() },
+                    modifier = Modifier.height(40.dp),
+                    shape = MaterialTheme.shapes.large,
+                    contentPadding = PaddingValues(
+                        horizontal = 20.dp,
+                        vertical = 0.dp
+                    ),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                ) {
+                    Text(
+                        "Done",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
-        } else if (viewModel.isAllComplete) {
+        } else if (!viewModel.waitingForNext && viewModel.isAllComplete) {
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
