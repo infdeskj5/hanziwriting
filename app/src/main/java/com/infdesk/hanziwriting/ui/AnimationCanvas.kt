@@ -50,6 +50,7 @@ private class PreparedStroke(
     val durationMs: Int,
     val pauseMs: Int,
     val isDot: Boolean,
+    val paceProfile: StrokePaceProfile,
     val startX: Float,
     val startY: Float
 )
@@ -58,6 +59,97 @@ private fun dist(dx: Float, dy: Float): Float = sqrt(dx * dx + dy * dy)
 
 private fun easeInOutCubic(x: Float): Float =
     if (x < 0.5f) 4f * x * x * x else 1f - (-2f * x + 2f).let { it * it * it } / 2f
+
+/**
+ * Converts elapsed animation time into distance travelled along a stroke.
+ *
+ * The profile allocates more time to portions where the median path changes
+ * direction sharply. A lookup table keeps this work out of the frame loop and
+ * makes the speed change gradual rather than stopping abruptly at a vertex.
+ */
+private class StrokePaceProfile private constructor(
+    private val cumulativeTime: FloatArray
+) {
+    fun distanceFractionAt(timeFraction: Float): Float {
+        if (cumulativeTime.size < 2) return timeFraction.coerceIn(0f, 1f)
+
+        val time = timeFraction.coerceIn(0f, 1f)
+        var low = 0
+        var high = cumulativeTime.lastIndex
+
+        while (low + 1 < high) {
+            val middle = (low + high) ushr 1
+            if (cumulativeTime[middle] < time) low = middle else high = middle
+        }
+
+        val timeStart = cumulativeTime[low]
+        val timeEnd = cumulativeTime[high]
+        val segmentFraction = ((time - timeStart) / (timeEnd - timeStart).coerceAtLeast(0.000001f))
+            .coerceIn(0f, 1f)
+
+        // Samples are evenly spaced by distance, so the interpolated sample
+        // index is also the normalized distance travelled along the path.
+        return ((low.toFloat() + segmentFraction) / cumulativeTime.lastIndex)
+            .coerceIn(0f, 1f)
+    }
+
+    companion object {
+        fun create(measure: AndroidPathMeasure, length: Float): StrokePaceProfile {
+            if (length <= 0.5f) return StrokePaceProfile(floatArrayOf(0f, 1f))
+
+            // About one sample every 2.5 px, with limits to bound preparation
+            // cost for unusually long or very short source paths.
+            val sampleCount = ceil(length / 2.5f).toInt().coerceIn(48, 192)
+            val samplePosition = FloatArray(2)
+            val beforeTangent = FloatArray(2)
+            val afterTangent = FloatArray(2)
+            val weights = FloatArray(sampleCount)
+            val cumulative = FloatArray(sampleCount)
+            val tangentWindow = (length * 0.025f).coerceIn(2f, 5f)
+            val halfRightAngle = (PI.toFloat() * 0.5f)
+
+            for (index in 0 until sampleCount) {
+                val distance = length * index.toFloat() / (sampleCount - 1).toFloat()
+                val beforeDistance = (distance - tangentWindow).coerceAtLeast(0f)
+                val afterDistance = (distance + tangentWindow).coerceAtMost(length)
+
+                var turnWeight = 1f
+                if (afterDistance - beforeDistance > 0.5f &&
+                    measure.getPosTan(beforeDistance, samplePosition, beforeTangent) &&
+                    measure.getPosTan(afterDistance, samplePosition, afterTangent)
+                ) {
+                    val cross = beforeTangent[0] * afterTangent[1] -
+                        beforeTangent[1] * afterTangent[0]
+                    val dot = beforeTangent[0] * afterTangent[0] +
+                        beforeTangent[1] * afterTangent[1]
+                    val angle = abs(atan2(cross, dot))
+                    val turnStrength = (angle / halfRightAngle).coerceIn(0f, 1f)
+
+                    // Square the turn signal so gentle curves stay fluid while
+                    // sharper vertices receive a more noticeable slowdown.
+                    turnWeight += 1.8f * turnStrength * turnStrength
+                }
+                weights[index] = turnWeight
+            }
+
+            // Integrate the local time-per-distance weights. Trapezoidal
+            // integration keeps the profile continuous across sample points.
+            var total = 0f
+            for (index in 1 until sampleCount) {
+                total += (weights[index - 1] + weights[index]) * 0.5f
+                cumulative[index] = total
+            }
+
+            if (total <= 0f) return StrokePaceProfile(floatArrayOf(0f, 1f))
+            for (index in cumulative.indices) {
+                cumulative[index] /= total
+            }
+            cumulative[0] = 0f
+            cumulative[cumulative.lastIndex] = 1f
+            return StrokePaceProfile(cumulative)
+        }
+    }
+}
 
 private fun buildSmoothAndroidPath(points: List<Offset>): AndroidPath {
     val path = AndroidPath()
@@ -229,6 +321,7 @@ fun AnimationCanvas(
                         durationMs = durationMs,
                         pauseMs = if (isDot) 45 else 75,
                         isDot = isDot,
+                        paceProfile = StrokePaceProfile.create(measure, length),
                         startX = points.first().x,
                         startY = points.first().y
                     )
@@ -371,7 +464,13 @@ fun AnimationCanvas(
                     val frameNanos = withFrameNanos { it }
                     fraction = ((frameNanos - startNanos).toFloat() / durationNanos)
                         .coerceIn(0f, 1f)
-                    progress.value = easeInOutCubic(fraction)
+                    // First ease the whole stroke at its start and finish,
+                    // then allocate extra time to sharp direction changes.
+                    // This slows the pen naturally through vertices (for
+                    // example, the turns in the 幺 component of 慈) without
+                    // changing the total duration of the stroke.
+                    val easedTime = easeInOutCubic(fraction)
+                    progress.value = stroke.paceProfile.distanceFractionAt(easedTime)
                 } while (fraction < 1f)
 
                 // Move the stroke into the completed range. The Canvas now
