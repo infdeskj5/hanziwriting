@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +47,7 @@ fun WordPage(
     var components by remember {
         mutableStateOf<List<String>>(emptyList())
     }
+    var showAddToListDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(word) {
         coroutineScope.launch {
@@ -216,7 +218,21 @@ fun WordPage(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = { showAddToListDialog = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Add to List", style = MaterialTheme.typography.titleMedium)
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         Button(
             onClick = { onPracticeClick(word) },
@@ -230,5 +246,12 @@ fun WordPage(
                 style = MaterialTheme.typography.titleMedium
             )
         }
+    }
+
+    if (showAddToListDialog) {
+        AddToListDialog(
+            item = word,
+            onDismiss = { showAddToListDialog = false }
+        )
     }
 }
