@@ -16,12 +16,17 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
-    // Inserts ONLY if the character is missing (keeps CC-CEDICT row when present)
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCharacter(character: HanziCharacter)
 
     @Query("UPDATE hanzi_characters SET radical = :radical, decomposition = :decomposition, matchesJson = :matchesJson, mmaDefinition = :mmaDefinition WHERE character = :character")
-    suspend fun updateRadicalAndDecomp(character: String, radical: String, decomposition: String, matchesJson: String, mmaDefinition: String)
+    suspend fun updateRadicalAndDecomp(
+        character: String,
+        radical: String,
+        decomposition: String,
+        matchesJson: String,
+        mmaDefinition: String
+    )
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCharacters(characters: List<HanziCharacter>)
@@ -37,6 +42,9 @@ interface HanziDao {
 
     @Query("SELECT * FROM practice_lists")
     suspend fun getAllLists(): List<PracticeList>
+
+    @Query("SELECT * FROM practice_lists WHERE name = :name ORDER BY listId LIMIT 1")
+    suspend fun getListByName(name: String): PracticeList?
 
     @Query("SELECT character FROM list_items WHERE listId = :listId")
     suspend fun getCharactersInList(listId: Int): List<String>
