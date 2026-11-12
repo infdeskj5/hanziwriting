@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,6 +22,9 @@ fun ListContentsScreen(
     onBackClick: () -> Unit,
     onPracticeSelectedClick: (List<String>) -> Unit
 ) {
+    // Consume Android system Back and return to the Lists screen instead of exiting the app.
+    BackHandler(enabled = true, onBack = onBackClick)
+
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
 
@@ -51,11 +55,13 @@ fun ListContentsScreen(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(listName, style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "${characters.size} items",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (!isLoading) {
+                    Text(
+                        "${characters.size} items",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
