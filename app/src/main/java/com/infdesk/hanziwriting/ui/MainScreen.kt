@@ -1,7 +1,5 @@
 package com.infdesk.hanziwriting.ui
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,7 +24,6 @@ enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings)
 }
 
-/** Startup readiness is owned by MainActivity so completed installations skip the loader entirely. */
 @Composable
 fun MainScreen() {
     HanziWritingApp()
@@ -120,7 +117,7 @@ fun HanziWritingApp() {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface,
-                    tonalElevation = 3.dp
+                    tonalElevation = 0.dp
                 ) {
                     Screen.entries.forEach { screen ->
                         NavigationBarItem(
@@ -142,63 +139,83 @@ fun HanziWritingApp() {
             }
         }
     ) { paddingValues ->
+        // Deliberately switch pages directly instead of Crossfade. Crossfade keeps
+        // both pages composed for its duration; WordPage contains looping stroke
+        // animations, so that doubles rendering work during navigation and caused
+        // avoidable frame drops on mid-range devices.
         Box(Modifier.fillMaxSize().padding(paddingValues)) {
-            Crossfade(
-                targetState = displayState,
-                animationSpec = tween(durationMillis = 140)
-            ) { screen ->
-                when (screen) {
-                    "Search" -> SearchScreen(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        searchResults = searchResults,
-                        onResultsChange = { searchResults = it },
-                        onWordClick = { wordBackStack = listOf(it) }
-                    )
-                    "WordPage" -> WordPage(
-                        word = currentWord.orEmpty(),
-                        onBackClick = { wordBackStack = wordBackStack.dropLast(1) },
-                        onComponentClick = { comp -> wordBackStack = wordBackStack + comp },
-                        onPracticeClick = { practiceCharacter = it }
-                    )
-                    "Practice" -> PracticeScreen(
-                        wordToPractice = practiceCharacter,
-                        onBackClick = { practiceCharacter = null }
-                    )
-                    "Lists" -> ListsScreen(
-                        onPracticeListClick = { practiceListId = it },
-                        onListContentsClick = {
-                            selectedListItems = emptySet()
-                            listContentsId = it
-                        }
-                    )
-                    "ListContents" -> ListContentsScreen(
-                        listId = listContentsId!!,
-                        selectedItems = selectedListItems,
-                        onSelectionChange = { selectedListItems = it },
-                        onBackClick = {
-                            listContentsId = null
-                            selectedListItems = emptySet()
-                        },
-                        onPracticeSelectedClick = { selected -> customPracticeItems = selected }
-                    )
-                    "CustomListPractice" -> PracticeScreen(
-                        wordToPractice = customPracticeItems.orEmpty().joinToString(""),
-                        onBackClick = { customPracticeItems = null }
-                    )
-                    "ListPractice" -> ListPracticeScreen(
-                        listId = practiceListId!!,
-                        onBackClick = { practiceListId = null }
-                    )
-                    "Settings" -> SettingsScreen()
-                    else -> SearchScreen(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        searchResults = searchResults,
-                        onResultsChange = { searchResults = it },
-                        onWordClick = { wordBackStack = listOf(it) }
-                    )
+            when (displayState) {
+                "Search" -> SearchScreen(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    searchResults = searchResults,
+                    onResultsChange = { searchResults = it },
+                    onWordClick = { wordBackStack = listOf(it) }
+                )
+
+                "WordPage" -> WordPage(
+                    word = currentWord.orEmpty(),
+                    onBackClick = { wordBackStack = wordBackStack.dropLast(1) },
+                    onComponentClick = { comp -> wordBackStack = wordBackStack + comp },
+                    onPracticeClick = { practiceCharacter = it }
+                )
+
+                "Practice" -> PracticeScreen(
+                    wordToPractice = practiceCharacter,
+                    onBackClick = { practiceCharacter = null }
+                )
+
+                "Lists" -> ListsScreen(
+                    onPracticeListClick = { practiceListId = it },
+                    onListContentsClick = {
+                        selectedListItems = emptySet()
+                        listContentsId = it
+                    }
+                )
+
+                "ListContents" -> {
+                    val activeListId = listContentsId
+                    if (activeListId != null) {
+                        ListContentsScreen(
+                            listId = activeListId,
+                            selectedItems = selectedListItems,
+                            onSelectionChange = { selectedListItems = it },
+                            onBackClick = {
+                                listContentsId = null
+                                selectedListItems = emptySet()
+                            },
+                            onPracticeSelectedClick = { selected -> customPracticeItems = selected }
+                        )
+                    } else {
+                        Spacer(Modifier.fillMaxSize())
+                    }
                 }
+
+                "CustomListPractice" -> PracticeScreen(
+                    wordToPractice = customPracticeItems.orEmpty().joinToString(""),
+                    onBackClick = { customPracticeItems = null }
+                )
+
+                "ListPractice" -> {
+                    val activeListId = practiceListId
+                    if (activeListId != null) {
+                        ListPracticeScreen(
+                            listId = activeListId,
+                            onBackClick = { practiceListId = null }
+                        )
+                    } else {
+                        Spacer(Modifier.fillMaxSize())
+                    }
+                }
+
+                "Settings" -> SettingsScreen()
+                else -> SearchScreen(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    searchResults = searchResults,
+                    onResultsChange = { searchResults = it },
+                    onWordClick = { wordBackStack = listOf(it) }
+                )
             }
         }
     }
