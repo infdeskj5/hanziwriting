@@ -1,11 +1,8 @@
 package com.infdesk.hanziwriting.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,11 +14,14 @@ import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.launch
 
 @Composable
-fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
+fun ListsScreen(
+    onPracticeListClick: (Int) -> Unit,
+    onListContentsClick: (Int) -> Unit
+) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val coroutineScope = rememberCoroutineScope()
-    
+
     var lists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
@@ -31,24 +31,62 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("My Lists", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(bottom = 16.dp))
-        
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(lists) { list ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clickable { onPracticeListClick(list.listId) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+        Text(
+            "My Lists",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        if (lists.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "You haven't created any lists yet.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(lists, key = { it.listId }) { list ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
                     ) {
-                        Text(list.name, style = MaterialTheme.typography.titleLarge)
-                        Text("Practice >", color = MaterialTheme.colorScheme.primary)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                list.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            OutlinedButton(
+                                onClick = { onListContentsClick(list.listId) },
+                                contentPadding = PaddingValues(horizontal = 12.dp)
+                            ) {
+                                Text("Contents")
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = { onPracticeListClick(list.listId) },
+                                contentPadding = PaddingValues(horizontal = 12.dp)
+                            ) {
+                                Text("Practice")
+                            }
+                        }
                     }
                 }
             }
@@ -56,15 +94,12 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // + Button at the bottom
         Button(
             onClick = { showCreateListDialog = true },
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = MaterialTheme.shapes.medium
         ) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(24.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Create New List", style = MaterialTheme.typography.titleMedium)
+            Text("＋  Create New List", style = MaterialTheme.typography.titleMedium)
         }
     }
 
@@ -82,16 +117,20 @@ fun ListsScreen(onPracticeListClick: (Int) -> Unit) {
                 )
             },
             confirmButton = {
-                Button(onClick = {
-                    if (newListName.isNotBlank()) {
-                        coroutineScope.launch {
-                            dao.insertList(PracticeList(name = newListName))
-                            lists = dao.getAllLists()
-                            newListName = ""
-                            showCreateListDialog = false
+                Button(
+                    onClick = {
+                        val name = newListName.trim()
+                        if (name.isNotEmpty()) {
+                            coroutineScope.launch {
+                                dao.insertList(PracticeList(name = name))
+                                lists = dao.getAllLists()
+                                newListName = ""
+                                showCreateListDialog = false
+                            }
                         }
-                    }
-                }) {
+                    },
+                    enabled = newListName.isNotBlank()
+                ) {
                     Text("Create")
                 }
             },
