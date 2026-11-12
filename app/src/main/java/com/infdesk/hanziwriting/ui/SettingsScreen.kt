@@ -58,8 +58,22 @@ fun SettingsScreen() {
                             addProperty("exportedAt", System.currentTimeMillis())
                         }
                         val listArray = JsonArray()
-                        val lists = dao.getAllLists()
-                        for (list in lists) {
+                        val allLists = dao.getAllLists()
+                        val byId = allLists.associateBy { it.listId }
+                        val savedOrderIds = context.getSharedPreferences(
+                            "hanzi_list_order",
+                            android.content.Context.MODE_PRIVATE
+                        ).getString("bottom_to_top_ids", null)
+                            ?.split(',')
+                            ?.mapNotNull { it.toIntOrNull() }
+                            .orEmpty()
+                        val orderedLists = if (savedOrderIds.isEmpty()) {
+                            allLists
+                        } else {
+                            savedOrderIds.mapNotNull(byId::get) +
+                                allLists.filterNot { it.listId in savedOrderIds }
+                        }
+                        for (list in orderedLists) {
                             val entry = JsonObject().apply {
                                 addProperty("name", list.name)
                                 addProperty("createdAt", list.createdAt)
@@ -74,7 +88,7 @@ fun SettingsScreen() {
                         val output = context.contentResolver.openOutputStream(uri, "wt")
                             ?: error("Couldn't open the selected destination.")
                         output.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
-                        lists.size
+                        orderedLists.size
                     }
                     statusMessage = "Exported $count list(s)."
                 } catch (error: Exception) {
@@ -110,6 +124,7 @@ fun SettingsScreen() {
 
                         var listsProcessed = 0
                         var newItems = 0
+                        val importedListIds = mutableListOf<Int>()
                         for (element in listArray) {
                             if (!element.isJsonObject) continue
                             val entry = element.asJsonObject
@@ -131,6 +146,8 @@ fun SettingsScreen() {
                                     ?: error("Couldn't create or locate list '$name'.")
                             }
 
+                            importedListIds += targetListId
+
                             val alreadyPresent = if (existingList != null) {
                                 dao.getCharactersInList(targetListId).toSet()
                             } else emptySet()
@@ -150,6 +167,23 @@ fun SettingsScreen() {
                             }
                             listsProcessed++
                         }
+
+                        // Preserve the backup's bottom-to-top order, then retain any
+                        // local lists that were not part of this backup.
+                        val orderPreferences = context.getSharedPreferences(
+                            "hanzi_list_order",
+                            android.content.Context.MODE_PRIVATE
+                        )
+                        val previousOrder = orderPreferences.getString("bottom_to_top_ids", null)
+                            ?.split(',')
+                            ?.mapNotNull { it.toIntOrNull() }
+                            .orEmpty()
+                        val mergedOrder = importedListIds.distinct() +
+                            previousOrder.filterNot { it in importedListIds }
+                        orderPreferences.edit()
+                            .putString("bottom_to_top_ids", mergedOrder.joinToString(","))
+                            .apply()
+
                         "Imported/merged $listsProcessed list(s) and $newItems item(s)."
                     }
                     statusMessage = result
