@@ -1,5 +1,7 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,13 +26,10 @@ enum class Screen(val title: String, val icon: ImageVector) {
     Settings("Settings", Icons.Default.Settings)
 }
 
+/** Startup readiness is owned by MainActivity so completed installations skip the loader entirely. */
 @Composable
 fun MainScreen() {
-    if (AppState.isInitializing) {
-        LoadingScreen()
-    } else {
-        HanziWritingApp()
-    }
+    HanziWritingApp()
 }
 
 @Composable
@@ -45,28 +44,47 @@ fun LoadingScreen() {
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.primary
         )
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(28.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(10.dp)
-                .clip(RoundedCornerShape(5.dp))
+                .height(8.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(AppState.initProgress.coerceIn(0f, 1f))
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(5.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.primary)
             )
         }
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         Text(
             AppState.initMessage,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+fun InitializationFailureScreen(onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Couldn't prepare Hanzi Writing", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            AppState.initMessage,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+        Button(onClick = onRetry) { Text("Try again") }
     }
 }
 
@@ -78,7 +96,7 @@ fun HanziWritingApp() {
     var practiceListId by remember { mutableStateOf<Int?>(null) }
     var listContentsId by remember { mutableStateOf<Int?>(null) }
 
-    // Keep the user's selections while they temporarily enter custom practice.
+    // Keep selected entries when returning from custom practice to list contents.
     var selectedListItems by remember { mutableStateOf<Set<String>>(emptySet()) }
     var customPracticeItems by remember { mutableStateOf<List<String>?>(null) }
 
@@ -86,7 +104,6 @@ fun HanziWritingApp() {
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
 
     val currentWord = wordBackStack.lastOrNull()
-
     val displayState = when {
         customPracticeItems != null -> "CustomListPractice"
         listContentsId != null -> "ListContents"
@@ -97,9 +114,14 @@ fun HanziWritingApp() {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (displayState == "Search" || displayState == "Lists" || displayState == "Settings") {
-                NavigationBar {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    tonalElevation = 3.dp
+                ) {
                     Screen.entries.forEach { screen ->
                         NavigationBarItem(
                             icon = { Icon(screen.icon, contentDescription = screen.title) },
@@ -120,63 +142,63 @@ fun HanziWritingApp() {
             }
         }
     ) { paddingValues ->
-        Box(
-            Modifier.fillMaxSize().padding(paddingValues),
-            contentAlignment = Alignment.Center
-        ) {
-            when (displayState) {
-                "Search" -> SearchScreen(
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    searchResults = searchResults,
-                    onResultsChange = { searchResults = it },
-                    onWordClick = { wordBackStack = listOf(it) }
-                )
-
-                "WordPage" -> WordPage(
-                    word = currentWord!!,
-                    onBackClick = { wordBackStack = wordBackStack.dropLast(1) },
-                    onComponentClick = { comp -> wordBackStack = wordBackStack + comp },
-                    onPracticeClick = { practiceCharacter = it }
-                )
-
-                "Practice" -> PracticeScreen(
-                    wordToPractice = practiceCharacter,
-                    onBackClick = { practiceCharacter = null }
-                )
-
-                "Lists" -> ListsScreen(
-                    onPracticeListClick = { practiceListId = it },
-                    onListContentsClick = {
-                        selectedListItems = emptySet()
-                        listContentsId = it
-                    }
-                )
-
-                "ListContents" -> ListContentsScreen(
-                    listId = listContentsId!!,
-                    selectedItems = selectedListItems,
-                    onSelectionChange = { selectedListItems = it },
-                    onBackClick = {
-                        listContentsId = null
-                        selectedListItems = emptySet()
-                    },
-                    onPracticeSelectedClick = { selected ->
-                        customPracticeItems = selected
-                    }
-                )
-
-                "CustomListPractice" -> PracticeScreen(
-                    wordToPractice = customPracticeItems.orEmpty().joinToString(""),
-                    onBackClick = { customPracticeItems = null }
-                )
-
-                "ListPractice" -> ListPracticeScreen(
-                    listId = practiceListId!!,
-                    onBackClick = { practiceListId = null }
-                )
-
-                "Settings" -> SettingsScreen()
+        Box(Modifier.fillMaxSize().padding(paddingValues)) {
+            Crossfade(
+                targetState = displayState,
+                animationSpec = tween(durationMillis = 140)
+            ) { screen ->
+                when (screen) {
+                    "Search" -> SearchScreen(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        searchResults = searchResults,
+                        onResultsChange = { searchResults = it },
+                        onWordClick = { wordBackStack = listOf(it) }
+                    )
+                    "WordPage" -> WordPage(
+                        word = currentWord.orEmpty(),
+                        onBackClick = { wordBackStack = wordBackStack.dropLast(1) },
+                        onComponentClick = { comp -> wordBackStack = wordBackStack + comp },
+                        onPracticeClick = { practiceCharacter = it }
+                    )
+                    "Practice" -> PracticeScreen(
+                        wordToPractice = practiceCharacter,
+                        onBackClick = { practiceCharacter = null }
+                    )
+                    "Lists" -> ListsScreen(
+                        onPracticeListClick = { practiceListId = it },
+                        onListContentsClick = {
+                            selectedListItems = emptySet()
+                            listContentsId = it
+                        }
+                    )
+                    "ListContents" -> ListContentsScreen(
+                        listId = listContentsId!!,
+                        selectedItems = selectedListItems,
+                        onSelectionChange = { selectedListItems = it },
+                        onBackClick = {
+                            listContentsId = null
+                            selectedListItems = emptySet()
+                        },
+                        onPracticeSelectedClick = { selected -> customPracticeItems = selected }
+                    )
+                    "CustomListPractice" -> PracticeScreen(
+                        wordToPractice = customPracticeItems.orEmpty().joinToString(""),
+                        onBackClick = { customPracticeItems = null }
+                    )
+                    "ListPractice" -> ListPracticeScreen(
+                        listId = practiceListId!!,
+                        onBackClick = { practiceListId = null }
+                    )
+                    "Settings" -> SettingsScreen()
+                    else -> SearchScreen(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        searchResults = searchResults,
+                        onResultsChange = { searchResults = it },
+                        onWordClick = { wordBackStack = listOf(it) }
+                    )
+                }
             }
         }
     }
