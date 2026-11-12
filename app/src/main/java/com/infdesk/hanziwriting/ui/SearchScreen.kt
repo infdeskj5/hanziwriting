@@ -41,13 +41,10 @@ fun SearchScreen(
     val resultsState = rememberLazyListState()
 
     var itemToAdd by remember { mutableStateOf<String?>(null) }
-    var resolvedQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(searchQuery) {
-        resolvedQuery = ""
         if (searchQuery.isBlank()) {
             onResultsChange(emptyList())
-            resolvedQuery = searchQuery
         } else {
             delay(300)
             val exactMatches = dao.searchHanziExact(searchQuery)
@@ -63,13 +60,12 @@ fun SearchScreen(
                     .distinctBy { it.character }
                     .sortedBy { it.character != searchQuery }
             )
-            resolvedQuery = searchQuery
         }
     }
 
     LaunchedEffect(searchQuery, searchResults) {
-        // In reverseLayout mode, item 0 is the result closest to the user's thumb.
-        resultsState.scrollToItem(0)
+        // reverseLayout makes item zero the bottom-most, thumb-reachable result.
+        if (searchResults.size > 1) resultsState.scrollToItem(0)
     }
 
     Column(
@@ -83,8 +79,7 @@ fun SearchScreen(
             modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
         )
 
-        val resultsAreCurrent = resolvedQuery == searchQuery
-        if (resultsAreCurrent && searchResults.isNotEmpty()) {
+        if (searchResults.isNotEmpty()) {
             Text(
                 "${searchResults.size} results",
                 style = MaterialTheme.typography.labelLarge,
@@ -93,51 +88,35 @@ fun SearchScreen(
             )
         }
 
-        when {
-            !resultsAreCurrent -> {
-                // Keep the result area visually quiet while the 300 ms search debounce resolves.
-                Spacer(modifier = Modifier.weight(1f))
+        // A one-result LazyColumn can align its only item to the top on some
+        // Compose versions even with reverseLayout. Pin that single card to the
+        // bottom explicitly. Multi-result searches continue to use reverseLayout.
+        if (searchResults.size == 1) {
+            val onlyResult = searchResults[0]
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                HanziResultItem(
+                    character = onlyResult,
+                    onWordClick = { onWordClick(onlyResult.character) },
+                    onAddToListClick = { itemToAdd = onlyResult.character }
+                )
             }
-            searchResults.isEmpty() -> {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(40.dp)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            if (searchQuery.isBlank()) "Find your next character" else "No matching entries",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            if (searchQuery.isBlank()) "Search by Hanzi, pinyin, or meaning." else "Try another character, pronunciation, or meaning.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            else -> {
-                LazyColumn(
-                    state = resultsState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    reverseLayout = true,
-                    contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(searchResults, key = { it.character }) { character ->
-                        HanziResultItem(
-                            character = character,
-                            onWordClick = { onWordClick(character.character) },
-                            onAddToListClick = { itemToAdd = character.character }
-                        )
-                    }
+        } else {
+            LazyColumn(
+                state = resultsState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                reverseLayout = true,
+                contentPadding = PaddingValues(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(searchResults, key = { it.character }) { character ->
+                    HanziResultItem(
+                        character = character,
+                        onWordClick = { onWordClick(character.character) },
+                        onAddToListClick = { itemToAdd = character.character }
+                    )
                 }
             }
         }
