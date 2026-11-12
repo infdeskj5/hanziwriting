@@ -18,7 +18,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.utils.PinyinUtils
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -34,7 +33,6 @@ fun WordPage(
     val dao = remember {
         AppDatabase.getDatabase(context).hanziDao()
     }
-    val coroutineScope = rememberCoroutineScope()
 
     var charData by remember {
         mutableStateOf<com.infdesk.hanziwriting.data.HanziCharacter?>(null)
@@ -50,21 +48,22 @@ fun WordPage(
     var showAddToListDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(word) {
-        coroutineScope.launch {
-            charData = dao.getCharacterExact(word)
-            graphicsData = dao.getGraphics(word)
+        charData = null
+        graphicsData = null
+        components = emptyList()
+        val loadedCharacter = dao.getCharacterExact(word)
+        charData = loadedCharacter
+        graphicsData = dao.getGraphics(word)
 
-            val idsSymbols = setOf(
-                '⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷',
-                '⿸', '⿹', '⿺', '⿻', '？', ' '
-            )
-
-            components = charData?.decomposition
-                ?.filter { it !in idsSymbols }
-                ?.map { it.toString() }
-                ?.distinct()
-                ?: emptyList()
-        }
+        val idsSymbols = setOf(
+            '⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷',
+            '⿸', '⿹', '⿺', '⿻', '？', ' '
+        )
+        components = loadedCharacter?.decomposition
+            ?.filter { it !in idsSymbols }
+            ?.map { it.toString() }
+            ?.distinct()
+            ?: emptyList()
     }
 
     Column(
@@ -92,41 +91,46 @@ fun WordPage(
         Spacer(modifier = Modifier.height(16.dp))
 
         if (charData == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+            // Keep the page structure and bottom actions stable while Room returns the entry.
+            Spacer(modifier = Modifier.weight(1f))
+        } else {
+            val data = charData!!
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                CircularProgressIndicator()
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                tonalElevation = 1.dp
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        data.character,
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        PinyinUtils.convertToToneMarks(data.pinyin),
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        data.definition,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
-            return
-        }
-
-        val data = charData!!
-
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                data.character,
-                style = MaterialTheme.typography.displayLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Text(
-                PinyinUtils.convertToToneMarks(data.pinyin),
-                style = MaterialTheme.typography.headlineSmall
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                data.definition,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
 
             if (components.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(24.dp))
@@ -203,19 +207,13 @@ fun WordPage(
                                     onComplete = {}
                                 )
                             } else {
-                                Box(
-                                    modifier = Modifier.size(100.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
+                                Spacer(modifier = Modifier.size(100.dp))
                             }
                         }
                     }
                 }
             }
+        }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
