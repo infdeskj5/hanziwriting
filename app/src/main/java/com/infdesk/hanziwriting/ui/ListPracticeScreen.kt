@@ -6,9 +6,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp // <-- ADDED THIS MISSING IMPORT
+import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
-import kotlinx.coroutines.launch
 
 @Composable
 fun ListPracticeScreen(
@@ -17,36 +16,31 @@ fun ListPracticeScreen(
 ) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
-    val coroutineScope = rememberCoroutineScope()
-    
-    var characters by remember { mutableStateOf<List<String>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    var characters by remember(listId) { mutableStateOf<List<String>?>(null) }
 
     LaunchedEffect(listId) {
-        coroutineScope.launch {
-            characters = dao.getCharactersInList(listId)
-            isLoading = false
-        }
+        characters = dao.getCharactersInList(listId)
     }
 
-    if (isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+    when {
+        characters == null -> {
+            // No transient spinner; the startup preparation screen is reserved for first-run setup.
+            Spacer(modifier = Modifier.fillMaxSize())
         }
-    } else if (characters.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("This list is empty.", style = MaterialTheme.typography.bodyLarge)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = onBackClick) { Text("Go Back") }
+        characters!!.isEmpty() -> {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("This list is empty.", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = onBackClick) { Text("Go Back") }
+                }
             }
         }
-    } else {
-        // Reuse the main PracticeScreen with the list joined as a single string.
-        // This applies the same 5-phase interleaved learning to lists!
-        PracticeScreen(
-            wordToPractice = characters.joinToString(""),
-            onBackClick = onBackClick
-        )
+        else -> {
+            PracticeScreen(
+                wordToPractice = characters!!.joinToString(""),
+                onBackClick = onBackClick
+            )
+        }
     }
 }
