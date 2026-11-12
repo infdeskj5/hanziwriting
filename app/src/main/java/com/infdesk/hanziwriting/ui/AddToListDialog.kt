@@ -136,12 +136,7 @@ fun AddToListDialog(
                 Column {
                     when {
                         isLoading -> {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().height(72.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
-                            }
+                            Spacer(modifier = Modifier.fillMaxWidth().height(72.dp))
                         }
                         lists.isEmpty() -> {
                             Text(
