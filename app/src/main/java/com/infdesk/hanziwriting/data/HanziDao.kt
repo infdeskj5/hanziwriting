@@ -1,6 +1,9 @@
 package com.infdesk.hanziwriting.data
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 
 @Dao
 interface HanziDao {
@@ -16,6 +19,7 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
+    // Inserts ONLY if the character is missing (keeps the CC-CEDICT row when present).
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCharacter(character: HanziCharacter)
 
@@ -40,7 +44,7 @@ interface HanziDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addCharacterToList(item: ListItem)
 
-    @Query("SELECT * FROM practice_lists")
+    @Query("SELECT * FROM practice_lists ORDER BY createdAt DESC, listId DESC")
     suspend fun getAllLists(): List<PracticeList>
 
     @Query("SELECT * FROM practice_lists WHERE name = :name ORDER BY listId LIMIT 1")
