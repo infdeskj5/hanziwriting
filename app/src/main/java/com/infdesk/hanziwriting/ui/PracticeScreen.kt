@@ -73,12 +73,8 @@ fun PracticeScreen(
         }
 
         if (currentChar == null || currentChar.charData == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
+            // Hold the page layout steady; only the first-run database initializer has a progress screen.
+            Spacer(modifier = Modifier.weight(1f))
             return
         }
 
