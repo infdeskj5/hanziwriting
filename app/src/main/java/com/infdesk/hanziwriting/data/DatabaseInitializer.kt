@@ -11,20 +11,28 @@ object DatabaseInitializer {
     private const val KEY_INIT_VERSION = "init_version"
     private const val CURRENT_INIT_VERSION = 4
 
-    suspend fun initializeIfNeeded(context: Context, database: AppDatabase) {
+    /** Safe, quick preference check used before the first Compose frame. */
+    fun needsInitialization(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val storedVersion = prefs.getInt(KEY_INIT_VERSION, 0)
+        return prefs.getInt(KEY_INIT_VERSION, 0) < CURRENT_INIT_VERSION
+    }
 
-        if (storedVersion >= CURRENT_INIT_VERSION) {
+    suspend fun initializeIfNeeded(context: Context, database: AppDatabase): Boolean {
+        if (!needsInitialization(context)) {
             AppState.isInitializing = false
-            return
+            return true
         }
 
-        withContext(Dispatchers.IO) {
+        AppState.isInitializing = true
+        AppState.initProgress = 0f
+        AppState.initMessage = "Preparing Hanzi Writing…"
+
+        return withContext(Dispatchers.IO) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             try {
                 val dao = database.hanziDao()
 
-                AppState.initMessage = "Clearing old data…"
+                AppState.initMessage = "Clearing old dictionary data…"
                 AppState.initProgress = 0.05f
                 dao.clearCharacters()
                 dao.clearGraphics()
@@ -45,8 +53,11 @@ object DatabaseInitializer {
                 AppState.initProgress = 1f
                 AppState.initMessage = "Ready!"
                 DebugLog.d("DBInit", "Initialization complete")
-            } catch (e: Exception) {
-                DebugLog.e("DBInit", "Initialization failed", e)
+                true
+            } catch (error: Exception) {
+                AppState.initMessage = "Initialization failed. Check storage and try again."
+                DebugLog.e("DBInit", "Initialization failed", error)
+                false
             } finally {
                 AppState.isInitializing = false
             }
