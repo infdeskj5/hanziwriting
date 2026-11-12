@@ -63,12 +63,8 @@ fun ListContentsScreen(
 
         when {
             isLoading -> {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
+                // Keep the header/footer geometry without flashing a loading indicator.
+                Spacer(modifier = Modifier.weight(1f))
             }
 
             characters.isEmpty() -> {
