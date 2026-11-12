@@ -1,19 +1,23 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -22,6 +26,9 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val LIST_ORDER_PREFS = "hanzi_list_order"
+private const val LIST_ORDER_KEY = "bottom_to_top_ids"
 
 @Composable
 fun ListsScreen(
@@ -32,17 +39,54 @@ fun ListsScreen(
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val nameFocusRequester = remember { FocusRequester() }
+    val nameFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val listPreferences = remember {
+        context.getSharedPreferences(LIST_ORDER_PREFS, android.content.Context.MODE_PRIVATE)
+    }
+    val listState = rememberLazyListState()
+    val dragHandleTopInsetPx = with(LocalDensity.current) { 10.dp.toPx() }
 
-    var lists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
+    // This list is stored in bottom-to-top order. With reverseLayout=true,
+    // index zero is the item nearest the bottom edge / user's thumb.
+    var bottomToTopLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
     var isCreating by remember { mutableStateOf(false) }
+    var draggingListId by remember { mutableStateOf<Int?>(null) }
+    val latestOrder = rememberUpdatedState(bottomToTopLists)
+
+    fun persistOrder(order: List<PracticeList>) {
+        bottomToTopLists = order
+        listPreferences.edit()
+            .putString(LIST_ORDER_KEY, order.joinToString(",") { it.listId.toString() })
+            .apply()
+    }
+
+    fun mergeDatabaseLists(databaseLists: List<PracticeList>) {
+        val byId = databaseLists.associateBy { it.listId }
+        val savedIds = listPreferences.getString(LIST_ORDER_KEY, null)
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            .orEmpty()
+
+        val restored = if (savedIds.isEmpty()) {
+            databaseLists.sortedByDescending { it.createdAt }
+        } else {
+            val saved = savedIds.mapNotNull(byId::get)
+            val savedSet = saved.map { it.listId }.toSet()
+            val newlyAdded = databaseLists
+                .filterNot { it.listId in savedSet }
+                .sortedByDescending { it.createdAt }
+            newlyAdded + saved
+        }
+        persistOrder(restored)
+    }
 
     LaunchedEffect(Unit) {
         isLoading = true
-        lists = dao.getAllLists()
+        runCatching { dao.getAllLists() }
+            .onSuccess(::mergeDatabaseLists)
         isLoading = false
     }
 
@@ -64,15 +108,24 @@ fun ListsScreen(
             "Organize characters and words for focused practice.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
         )
+        if (bottomToTopLists.isNotEmpty()) {
+            Text(
+                "Hold and drag the handle to change the order.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
 
         when {
             isLoading -> {
-                // Keep the content area stable while the first database read completes.
+                // Reserve the list area; avoid a short-lived loading spinner flash.
                 Spacer(modifier = Modifier.weight(1f))
             }
-            lists.isEmpty() -> {
+
+            bottomToTopLists.isEmpty() -> {
                 Surface(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     shape = MaterialTheme.shapes.extraLarge,
@@ -84,10 +137,10 @@ fun ListsScreen(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Icon(
-                            Icons.Default.List,
+                            Icons.Default.Add,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(42.dp)
+                            modifier = Modifier.size(38.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text("Your lists will appear here", style = MaterialTheme.typography.titleMedium)
@@ -99,53 +152,111 @@ fun ListsScreen(
                     }
                 }
             }
+
             else -> {
                 LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     reverseLayout = true,
                     contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(lists, key = { it.listId }) { list ->
+                    items(bottomToTopLists, key = { it.listId }) { list ->
+                        val isDragging = draggingListId == list.listId
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.large,
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            elevation = CardDefaults.cardElevation(
+                                defaultElevation = if (isDragging) 3.dp else 1.dp
+                            ),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isDragging) {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                } else MaterialTheme.colorScheme.surface
+                            )
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp)
                             ) {
-                                Surface(
-                                    shape = MaterialTheme.shapes.medium,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(42.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Default.List,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
+                                    Surface(
+                                        modifier = Modifier.size(44.dp),
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.pointerInput(list.listId) {
+                                                var draggedCenterY = 0f
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = { startOffset ->
+                                                        draggingListId = list.listId
+                                                        val itemInfo = listState.layoutInfo.visibleItemsInfo
+                                                            .firstOrNull { it.key == list.listId }
+                                                        draggedCenterY = (itemInfo?.offset ?: 0) + dragHandleTopInsetPx + startOffset.y
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        draggedCenterY += dragAmount.y
+                                                        val targetInfo = listState.layoutInfo.visibleItemsInfo
+                                                            .firstOrNull { info ->
+                                                                draggedCenterY >= info.offset &&
+                                                                    draggedCenterY <= info.offset + info.size
+                                                            }
+                                                        val targetId = targetInfo?.key as? Int
+                                                        val current = latestOrder.value
+                                                        if (targetId != null) {
+                                                            val from = current.indexOfFirst { it.listId == list.listId }
+                                                            val to = current.indexOfFirst { it.listId == targetId }
+                                                            if (from >= 0 && to >= 0 && from != to) {
+                                                                val reordered = current.toMutableList()
+                                                                val moved = reordered.removeAt(from)
+                                                                reordered.add(to, moved)
+                                                                persistOrder(reordered)
+                                                            }
+                                                        }
+                                                    },
+                                                    onDragEnd = { draggingListId = null },
+                                                    onDragCancel = { draggingListId = null }
+                                                )
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DragHandle,
+                                                contentDescription = "Drag to reorder ${list.name}",
+                                                tint = if (isDragging) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        list.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    list.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedButton(
-                                    onClick = { onListContentsClick(list.listId) },
-                                    contentPadding = PaddingValues(horizontal = 10.dp),
-                                    shape = MaterialTheme.shapes.medium
-                                ) { Text("Contents") }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Button(
-                                    onClick = { onPracticeListClick(list.listId) },
-                                    contentPadding = PaddingValues(horizontal = 10.dp),
-                                    shape = MaterialTheme.shapes.medium
-                                ) { Text("Practice") }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { onListContentsClick(list.listId) },
+                                        contentPadding = PaddingValues(horizontal = 14.dp),
+                                        shape = MaterialTheme.shapes.medium
+                                    ) { Text("Contents") }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Button(
+                                        onClick = { onPracticeListClick(list.listId) },
+                                        contentPadding = PaddingValues(horizontal = 14.dp),
+                                        shape = MaterialTheme.shapes.medium
+                                    ) { Text("Practice") }
+                                }
                             }
                         }
                     }
@@ -176,7 +287,7 @@ fun ListsScreen(
             },
             title = { Text("New Practice List") },
             text = {
-                OutlinedTextField(
+                androidx.compose.material3.OutlinedTextField(
                     value = newListName,
                     onValueChange = { newListName = it },
                     label = { Text("List name") },
@@ -191,7 +302,7 @@ fun ListsScreen(
                                 isCreating = true
                                 try {
                                     dao.insertList(PracticeList(name = name))
-                                    lists = dao.getAllLists()
+                                    mergeDatabaseLists(dao.getAllLists())
                                     newListName = ""
                                     showCreateListDialog = false
                                 } finally {
@@ -211,7 +322,7 @@ fun ListsScreen(
                             isCreating = true
                             try {
                                 dao.insertList(PracticeList(name = name))
-                                lists = dao.getAllLists()
+                                mergeDatabaseLists(dao.getAllLists())
                                 newListName = ""
                                 showCreateListDialog = false
                             } finally {
