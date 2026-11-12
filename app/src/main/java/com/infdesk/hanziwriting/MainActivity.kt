@@ -31,8 +31,8 @@ class MainActivity : ComponentActivity() {
         DebugLog.init(this)
         ProgressStore.init(this)
 
-        // This preference read happens before Compose draws. Already-initialized
-        // installations start directly on Search without a one-frame Preparing screen.
+        // Read the quick preference before the first Compose frame. Existing
+        // installations can open the main UI immediately without a Preparing flash.
         val initializationRequiredAtLaunch = DatabaseInitializer.needsInitialization(this)
 
         setContent {
@@ -61,9 +61,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     when {
                         isReady -> HanziWritingApp()
-                        initializationFailed -> InitializationFailureScreen {
-                            retryToken++
-                        }
+                        initializationFailed -> InitializationFailureScreen { retryToken++ }
                         else -> LoadingScreen()
                     }
                 }
