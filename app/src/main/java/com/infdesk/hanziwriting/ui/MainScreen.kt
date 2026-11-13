@@ -136,10 +136,12 @@ fun HanziWritingApp() {
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
         customPracticeItems != null -> "CustomListPractice"
-        listContentsId != null -> "ListContents"
         practiceListId != null -> "ListPractice"
         practiceCharacter != null -> "Practice"
+        // A word opened from List Contents temporarily takes over this route.
+        // Popping its wordBackStack returns to the still-selected list.
         currentWord != null -> "WordPage"
+        listContentsId != null -> "ListContents"
         else -> currentScreen.name
     }
 
@@ -228,6 +230,7 @@ fun HanziWritingApp() {
                                 listContentsId = null
                                 selectedListItems = emptySet()
                             },
+                            onWordClick = { item -> wordBackStack = listOf(item) },
                             onPracticeSelectedClick = { selected -> customPracticeItems = selected }
                         )
                     } else {
