@@ -239,8 +239,7 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 FilledTonalIconButton(
-                    onClick = { selectedIndex = (selectedIndex - 1).coerceAtLeast(0) },
-                    enabled = selectedIndex > 0
+                    onClick = { selectedIndex = (selectedIndex - 1 + strokeRules.size) % strokeRules.size }
                 ) {
                     Icon(Icons.Default.ChevronLeft, contentDescription = "Previous stroke rule")
                 }
@@ -258,8 +257,7 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 FilledTonalIconButton(
-                    onClick = { selectedIndex = (selectedIndex + 1).coerceAtMost(strokeRules.lastIndex) },
-                    enabled = selectedIndex < strokeRules.lastIndex
+                    onClick = { selectedIndex = (selectedIndex + 1) % strokeRules.size }
                 ) {
                     Icon(Icons.Default.ChevronRight, contentDescription = "Next stroke rule")
                 }
