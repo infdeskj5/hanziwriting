@@ -90,14 +90,16 @@ fun ListContentsScreen(
             }
 
             else -> {
-                // Item 0 is the physical bottom item; later entries are above it.
+                // Keep the database order as bottom-to-top. Render a reversed visual copy
+                // in a normal LazyColumn and bottom-align short lists. This avoids relying
+                // on reverseLayout's scroll-start semantics for the visual order.
+                val visualCharacters = characters.asReversed()
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    reverseLayout = true,
                     contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp, alignment = Alignment.Bottom)
                 ) {
-                    items(characters, key = { it }) { item ->
+                    items(visualCharacters, key = { it }) { item ->
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.medium,
