@@ -1,10 +1,12 @@
 package com.infdesk.hanziwriting.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -17,6 +19,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
@@ -24,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.PinyinUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 @Composable
@@ -32,59 +36,80 @@ fun SearchScreen(
     onSearchQueryChange: (String) -> Unit,
     searchResults: List<HanziCharacter>,
     onResultsChange: (List<HanziCharacter>) -> Unit,
+    completedSearchQuery: String,
+    onSearchCompleted: (String) -> Unit,
+    resultsListState: LazyListState,
     onWordClick: (String) -> Unit
 ) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
-    val resultsState = rememberLazyListState()
+    val blankAreaInteraction = remember { MutableInteractionSource() }
 
     var itemToAdd by remember { mutableStateOf<String?>(null) }
-    // Empty until this composition has completed a search. This also shows
-    // "Searching…" immediately when returning to Search with a saved query.
-    var completedQuery by remember { mutableStateOf("") }
-    val isSearching = searchQuery.isNotBlank() && completedQuery != searchQuery
+
+    // Keep the completed-query marker in MainScreen, not here. SearchScreen is
+    // temporarily removed when Word Details opens; lifted state prevents a refetch.
+    val isSearching = searchQuery.isNotBlank() && completedSearchQuery != searchQuery
+
+    BackHandler(enabled = searchQuery.isNotBlank() || searchResults.isNotEmpty()) {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        onSearchQueryChange("")
+        onResultsChange(emptyList())
+        onSearchCompleted("")
+    }
 
     LaunchedEffect(searchQuery) {
         if (searchQuery.isBlank()) {
             onResultsChange(emptyList())
-            completedQuery = ""
-        } else {
-            onResultsChange(emptyList())
-            completedQuery = ""
-            delay(250)
-            try {
-                val exactMatches = dao.searchHanziExact(searchQuery)
-                val composingMatches = if (searchQuery.length > 1 && exactMatches.isNotEmpty()) {
-                    searchQuery.toCharArray().distinct().map { it.toString() }
-                        .flatMap { dao.searchHanziExact(it) }
-                } else {
-                    emptyList()
-                }
+            onSearchCompleted("")
+            return@LaunchedEffect
+        }
 
-                onResultsChange(
-                    (exactMatches + composingMatches)
-                        .distinctBy { it.character }
-                        .sortedBy { it.character != searchQuery }
-                )
-                completedQuery = searchQuery
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                onResultsChange(emptyList())
-                completedQuery = searchQuery
+        // A completed query remains cached when the user opens Word Details and
+        // returns. Only a genuinely new query triggers another database lookup.
+        if (completedSearchQuery == searchQuery) return@LaunchedEffect
+
+        // Keep the previous completed result set in memory while this query is
+        // pending. The Searching state hides it; retaining it allows an immediate
+        // return to the previously completed query without another database read.
+        delay(250)
+        val queryBeingLoaded = searchQuery
+        try {
+            val exactMatches = dao.searchHanziExact(queryBeingLoaded)
+            val composingMatches = if (queryBeingLoaded.length > 1 && exactMatches.isNotEmpty()) {
+                queryBeingLoaded.toCharArray().distinct().map { it.toString() }
+                    .flatMap { dao.searchHanziExact(it) }
+            } else {
+                emptyList()
             }
+
+            val results = (exactMatches + composingMatches)
+                .distinctBy { it.character }
+                .sortedBy { it.character != queryBeingLoaded }
+
+            onResultsChange(results)
+            onSearchCompleted(queryBeingLoaded)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            onResultsChange(emptyList())
+            onSearchCompleted(queryBeingLoaded)
         }
     }
 
-    LaunchedEffect(searchQuery, searchResults) {
-        // In reverseLayout mode, item 0 is the result closest to the user's thumb.
-        resultsState.scrollToItem(0)
-    }
+    // This is the same bottom-first presentation used by the working List Contents
+    // screen: reverse the visual copy and bottom-align a short result set. In
+    // particular, a single-character result is anchored at the bottom, not the top.
+    val visualResults = remember(searchResults) { searchResults.asReversed() }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         Text("Explore Hanzi", style = MaterialTheme.typography.headlineMedium)
         Text(
@@ -103,35 +128,62 @@ fun SearchScreen(
             )
         }
 
+        // Clicking unused space clears the text-field focus/cursor. Child cards and
+        // carousel controls still receive their own clicks normally.
         Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.Center
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = blankAreaInteraction,
+                    indication = null
+                ) {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                }
         ) {
             when {
                 isSearching -> {
-                    Text(
-                        "Searching…",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Searching…",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                searchQuery.isNotBlank() && searchResults.isEmpty() -> {
-                    Text(
-                        "No matching characters found",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
+
+                searchQuery.isBlank() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        StrokeRulesCarousel(modifier = Modifier.fillMaxWidth())
+                    }
                 }
+
+                searchResults.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            "No matching characters found",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
                 else -> {
                     LazyColumn(
-                        state = resultsState,
+                        state = resultsListState,
                         modifier = Modifier.fillMaxSize(),
-                        reverseLayout = true,
                         contentPadding = PaddingValues(vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(
+                            10.dp,
+                            alignment = Alignment.Bottom
+                        )
                     ) {
-                        items(searchResults, key = { it.character }) { character ->
+                        items(visualResults, key = { it.character }) { character ->
                             HanziResultItem(
                                 character = character,
                                 onWordClick = { onWordClick(character.character) },
@@ -145,22 +197,28 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // A stationary placeholder avoids the Material floating-label position
+        // animation that appeared stuttery on the user's device.
         OutlinedTextField(
             value = searchQuery,
-            onValueChange = { value ->
-                completedQuery = ""
-                onSearchQueryChange(value)
-            },
-            label = { Text("Search Hanzi, Pinyin, or English") },
+            onValueChange = onSearchQueryChange,
+            placeholder = { Text("Hanzi, Pinyin or English") },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
             shape = MaterialTheme.shapes.large,
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.None,
                 imeAction = ImeAction.Search
             ),
-            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
+            keyboardActions = KeyboardActions(
+                onSearch = {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                }
+            )
         )
     }
 
