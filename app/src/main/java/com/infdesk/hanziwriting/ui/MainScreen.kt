@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.HanziCharacter
+import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.AppState
 
 enum class Screen(val title: String, val icon: ImageVector) {
@@ -100,6 +101,10 @@ fun HanziWritingApp() {
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
 
+    // Keep the Lists snapshot above the navigation destinations. The Lists
+    // composable is recreated when switching tabs, but its content won't vanish.
+    var cachedLists by remember { mutableStateOf<List<PracticeList>?>(null) }
+
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
         customPracticeItems != null -> "CustomListPractice"
@@ -166,6 +171,8 @@ fun HanziWritingApp() {
                 )
 
                 "Lists" -> ListsScreen(
+                    cachedLists = cachedLists,
+                    onListsChanged = { cachedLists = it },
                     onPracticeListClick = { practiceListId = it },
                     onListContentsClick = {
                         selectedListItems = emptySet()
