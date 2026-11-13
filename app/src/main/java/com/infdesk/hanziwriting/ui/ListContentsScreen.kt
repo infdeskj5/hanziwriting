@@ -100,6 +100,7 @@ fun ListContentsScreen(
 
                 LazyColumn(
                     modifier = Modifier.weight(1f),
+                    reverseLayout = true,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     itemsIndexed(characters, key = { index, value -> "$index-$value" }) { _, item ->
