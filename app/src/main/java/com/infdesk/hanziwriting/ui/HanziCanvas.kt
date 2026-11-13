@@ -25,6 +25,7 @@ import com.infdesk.hanziwriting.utils.HanziTransform
 fun HanziCanvas(
     viewModel: PracticeViewModel,
     showTemplate: Boolean,
+    useOriginalStrokes: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val currentChar = viewModel.currentChar
@@ -40,13 +41,14 @@ fun HanziCanvas(
         val guideAlpha = 0.25f 
         val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = guideAlpha)
 
-        val svgPaths: List<Path> = remember(currentChar.strokes, canvasSizePx) {
-            currentChar.strokes.mapNotNull { svg ->
-                try {
+        // Keep null entries so SVG path indices continue to match stroke indices.
+        val svgPaths: List<Path?> = remember(currentChar.strokes, canvasSizePx) {
+            currentChar.strokes.map { svg ->
+                runCatching {
                     val androidPath = PathParser.createPathFromPathData(svg)
                     androidPath.transform(HanziTransform.matrix(scale))
                     androidPath.asComposePath()
-                } catch (e: Exception) { null }
+                }.getOrNull()
             }
         }
 
@@ -78,16 +80,33 @@ fun HanziCanvas(
             drawLine(gridColor, Offset(size.width, 0f), Offset(0f, size.height), strokeWidth = 1.5f)
 
             if (showTemplate && svgPaths.size == currentChar.strokes.size) {
-                svgPaths.forEach { path -> drawPath(path, guideColor, style = Fill) }
+                svgPaths.forEach { path ->
+                    if (path != null) drawPath(path, guideColor, style = Fill)
+                }
             }
 
             val userStrokeWidth = size.width * 0.055f
-            viewModel.completedStrokes.forEach { points ->
-                val path = Path()
-                points.forEachIndexed { i, off ->
-                    if (i == 0) path.moveTo(off.x, off.y) else path.lineTo(off.x, off.y)
+            viewModel.completedStrokes.forEachIndexed { strokeIndex, points ->
+                val originalPath = svgPaths.getOrNull(strokeIndex)
+                if (useOriginalStrokes && originalPath != null) {
+                    // On a successful stroke, replace the user's rounded gesture line
+                    // with the dataset's exact filled SVG outline.
+                    drawPath(originalPath, userColor.copy(alpha = 0.96f), style = Fill)
+                } else {
+                    val path = Path()
+                    points.forEachIndexed { i, off ->
+                        if (i == 0) path.moveTo(off.x, off.y) else path.lineTo(off.x, off.y)
+                    }
+                    drawPath(
+                        path,
+                        userColor.copy(alpha = 0.75f),
+                        style = Stroke(
+                            width = userStrokeWidth,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round
+                        )
+                    )
                 }
-                drawPath(path, userColor.copy(alpha = 0.75f), style = Stroke(width = userStrokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
 
             if (viewModel.currentStrokePoints.isNotEmpty()) {
