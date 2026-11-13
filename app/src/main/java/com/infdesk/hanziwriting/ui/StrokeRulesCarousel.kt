@@ -77,6 +77,42 @@ private val strokeRules = listOf(
         "A detached dot is sometimes written after the main body of the character.",
         "犬",
         "This is a common exception to the general top-to-bottom tendency."
+    ),
+    StrokeRule(
+        "Bottom horizontal last",
+        "When a vertical stroke crosses several horizontal strokes, the bottom horizontal is usually written last.",
+        "王",
+        "Finish the lower supporting line after the strokes above it."
+    ),
+    StrokeRule(
+        "Spanning horizontal last",
+        "A middle horizontal stroke that cuts across the character is often written after the other strokes.",
+        "女",
+        "The long crossbar completes the structure rather than starting it."
+    ),
+    StrokeRule(
+        "Walking radical last",
+        "In characters with 辶 or 廴, write the main component first and the walking radical afterward.",
+        "建",
+        "The enclosing movement is added after the carried component."
+    ),
+    StrokeRule(
+        "Bottom enclosure last",
+        "For a character enclosed from below, write the inside and upper structure before the bottom enclosure.",
+        "凶",
+        "The lower frame is the final stroke group."
+    ),
+    StrokeRule(
+        "Crossing vertical last",
+        "A long vertical stroke that passes through the rest of a character can be written after the strokes it crosses.",
+        "中",
+        "The central line is added after the enclosing horizontal structure."
+    ),
+    StrokeRule(
+        "Crossing diagonals",
+        "When two diagonal strokes cross or connect, the right-to-left diagonal is written before the left-to-right diagonal.",
+        "交",
+        "This is a more specific rule for connected diagonal strokes."
     )
 )
 
@@ -184,19 +220,9 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
                             onComplete = {}
                         )
                     } else {
-                        Surface(
-                            modifier = Modifier.size(100.dp),
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surface
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    rule.example,
-                                    style = MaterialTheme.typography.displayMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
+                        // Keep the example area visually quiet until its SVG is ready.
+                        // Do not flash the complete glyph before the stroke animation starts.
+                        Spacer(modifier = Modifier.size(100.dp))
                     }
                     Text(
                         rule.example,
