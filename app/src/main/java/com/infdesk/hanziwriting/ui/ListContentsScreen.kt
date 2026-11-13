@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +23,7 @@ fun ListContentsScreen(
     selectedItems: Set<String>,
     onSelectionChange: (Set<String>) -> Unit,
     onBackClick: () -> Unit,
+    onWordClick: (String) -> Unit,
     onPracticeSelectedClick: (List<String>) -> Unit
 ) {
     BackHandler(enabled = true, onBack = onBackClick)
@@ -40,8 +42,8 @@ fun ListContentsScreen(
         isLoading = true
         val allLists = dao.getAllLists()
         listName = allLists.firstOrNull { it.listId == listId }?.name ?: "List contents"
-        // DAO returns insertion order. With reverseLayout=true the oldest saved item
-        // is anchored to the bottom and newer items are stacked above it.
+        // Keep DAO insertion order as the canonical bottom-to-top order.
+        // The visual copy is reversed below for a normal LazyColumn.
         characters = dao.getCharactersInList(listId).distinct()
         isLoading = false
         onSelectionChange(selectedItems.intersect(characters.toSet()))
@@ -118,6 +120,16 @@ fun ListContentsScreen(
                                     style = MaterialTheme.typography.titleLarge,
                                     modifier = Modifier.weight(1f)
                                 )
+                                IconButton(
+                                    onClick = { onWordClick(item) },
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = "View details for $item",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                                 Checkbox(
                                     checked = item in selectedItems,
                                     onCheckedChange = { checked ->
