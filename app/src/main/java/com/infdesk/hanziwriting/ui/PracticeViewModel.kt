@@ -61,7 +61,8 @@ data class CharacterProgress(
 }
 
 class PracticeViewModel(
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val practiceCharactersIndividually: Boolean = false
 ) : ViewModel() {
 
     val characters = mutableStateListOf<CharacterProgress>()
@@ -204,6 +205,30 @@ class PracticeViewModel(
             return
         }
 
+        if (practiceCharactersIndividually) {
+            // Sequential mode: finish every available phase for this Hanzi before
+            // moving to the next one. Characters without a structure quiz simply
+            // skip that phase.
+            while (currentCharIndex < characters.size) {
+                val availablePhases = characters[currentCharIndex].getPhases()
+                val nextPhaseIndex = (currentGlobalPhaseIndex..allPossiblePhases.lastIndex)
+                    .firstOrNull { allPossiblePhases[it] in availablePhases }
+
+                if (nextPhaseIndex != null) {
+                    currentGlobalPhaseIndex = nextPhaseIndex
+                    return
+                }
+
+                currentCharIndex++
+                currentGlobalPhaseIndex = 0
+            }
+
+            isAllComplete = true
+            return
+        }
+
+        // Original interleaved mode: complete a phase across the whole set before
+        // advancing to the next phase.
         while (
             currentCharIndex < characters.size &&
             !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
@@ -239,7 +264,7 @@ class PracticeViewModel(
 
         if (isAbsoluteLastStep()) {
             isAllComplete = true
-            characters.firstOrNull()?.let {
+            currentChar?.let {
                 ProgressStore.incrementSuccess(it.character)
             }
         } else {
@@ -253,6 +278,12 @@ class PracticeViewModel(
     }
 
     private fun isAbsoluteLastStep(): Boolean {
+        if (practiceCharactersIndividually) {
+            val phasesForCurrentCharacter = currentChar?.getPhases().orEmpty()
+            return currentCharIndex == characters.lastIndex &&
+                phasesForCurrentCharacter.lastOrNull() == currentGlobalPhase
+        }
+
         if (currentGlobalPhaseIndex != allPossiblePhases.lastIndex) return false
 
         var next = currentCharIndex + 1
@@ -270,6 +301,28 @@ class PracticeViewModel(
     private fun advancePhase() {
         if (characters.isEmpty()) {
             isAllComplete = true
+            return
+        }
+
+        if (practiceCharactersIndividually) {
+            val phasesForCurrentCharacter = currentChar?.getPhases().orEmpty()
+            val currentPhasePosition = phasesForCurrentCharacter.indexOf(currentGlobalPhase)
+
+            if (currentPhasePosition >= 0 && currentPhasePosition < phasesForCurrentCharacter.lastIndex) {
+                val nextPhase = phasesForCurrentCharacter[currentPhasePosition + 1]
+                currentGlobalPhaseIndex = allPossiblePhases.indexOf(nextPhase)
+            } else {
+                currentCharIndex++
+                if (currentCharIndex >= characters.size) {
+                    isAllComplete = true
+                    resetStrokeState()
+                    return
+                }
+                val firstPhase = characters[currentCharIndex].getPhases().first()
+                currentGlobalPhaseIndex = allPossiblePhases.indexOf(firstPhase)
+            }
+
+            resetStrokeState()
             return
         }
 
@@ -302,7 +355,7 @@ class PracticeViewModel(
             } else {
                 isAllComplete = true
 
-                characters.firstOrNull()?.let {
+                currentChar?.let {
                     ProgressStore.incrementSuccess(it.character)
                 }
             }
