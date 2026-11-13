@@ -37,6 +37,9 @@ fun PracticeScreen(
     val practiceCharactersIndividually = remember {
         practicePreferences.getBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, false)
     }
+    val useOriginalStrokes = remember {
+        practicePreferences.getBoolean(PracticePreferences.USE_ORIGINAL_STROKES, false)
+    }
     val viewModel = remember(practiceCharactersIndividually) {
         PracticeViewModel(
             AppDatabase.getDatabase(context),
@@ -199,6 +202,7 @@ fun PracticeScreen(
                 HanziCanvas(
                     viewModel = viewModel,
                     showTemplate = showTemplate,
+                    useOriginalStrokes = useOriginalStrokes,
                     modifier = Modifier.size(300.dp)
                 )
             }
