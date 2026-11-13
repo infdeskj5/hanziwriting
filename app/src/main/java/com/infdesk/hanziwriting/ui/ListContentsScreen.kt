@@ -98,12 +98,15 @@ fun ListContentsScreen(
                     }
                 }
 
+                // The database list remains in its natural order for practice.
+                // Only the display copy is reversed, so the first saved item is
+                // the one closest to the bottom edge / user's thumb.
+                val displayedCharacters = characters.asReversed()
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    reverseLayout = true,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    itemsIndexed(characters, key = { index, value -> "$index-$value" }) { _, item ->
+                    itemsIndexed(displayedCharacters, key = { _, value -> value }) { _, item ->
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.medium,
