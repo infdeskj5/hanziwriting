@@ -53,6 +53,12 @@ interface HanziDao {
     @Query("SELECT character FROM list_items WHERE listId = :listId")
     suspend fun getCharactersInList(listId: Int): List<String>
 
+    @Query("DELETE FROM list_items WHERE listId = :listId")
+    suspend fun deleteListItems(listId: Int)
+
+    @Query("DELETE FROM practice_lists WHERE listId = :listId")
+    suspend fun deletePracticeList(listId: Int)
+
     @Query("DELETE FROM hanzi_characters")
     suspend fun clearCharacters()
 
