@@ -32,6 +32,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.delay
