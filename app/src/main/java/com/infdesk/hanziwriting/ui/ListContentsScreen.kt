@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +25,7 @@ fun ListContentsScreen(
     onSelectionChange: (Set<String>) -> Unit,
     onBackClick: () -> Unit,
     onWordClick: (String) -> Unit,
+    onPracticeItemClick: (String) -> Unit,
     onPracticeSelectedClick: (List<String>) -> Unit
 ) {
     BackHandler(enabled = true, onBack = onBackClick)
@@ -120,6 +122,24 @@ fun ListContentsScreen(
                                     style = MaterialTheme.typography.titleLarge,
                                     modifier = Modifier.weight(1f)
                                 )
+                                Checkbox(
+                                    checked = item in selectedItems,
+                                    onCheckedChange = { checked ->
+                                        onSelectionChange(
+                                            if (checked) selectedItems + item else selectedItems - item
+                                        )
+                                    }
+                                )
+                                IconButton(
+                                    onClick = { onPracticeItemClick(item) },
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = "Practice $item",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                                 IconButton(
                                     onClick = { onWordClick(item) },
                                     modifier = Modifier.size(42.dp)
@@ -130,14 +150,6 @@ fun ListContentsScreen(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                                Checkbox(
-                                    checked = item in selectedItems,
-                                    onCheckedChange = { checked ->
-                                        onSelectionChange(
-                                            if (checked) selectedItems + item else selectedItems - item
-                                        )
-                                    }
-                                )
                             }
                         }
                     }
