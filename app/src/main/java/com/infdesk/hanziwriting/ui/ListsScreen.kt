@@ -1,7 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
@@ -30,7 +29,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -61,8 +59,6 @@ fun ListsScreen(
         context.getSharedPreferences(LIST_ORDER_PREFS, android.content.Context.MODE_PRIVATE)
     }
     val listState = rememberLazyListState()
-    val density = LocalDensity.current
-    val reorderFallbackPx = with(density) { 88.dp.toPx() }
 
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
@@ -72,14 +68,14 @@ fun ListsScreen(
     var listPendingDeletion by remember { mutableStateOf<PracticeList?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
 
-    val currentLists = cachedLists.orEmpty()
+    val currentLists = cachedLists.orEmpty() // Stored in visual bottom-to-top order.
     val latestLists = rememberUpdatedState(currentLists)
     val latestListsChanged = rememberUpdatedState(onListsChanged)
 
-    fun saveOrder(order: List<PracticeList>) {
-        onListsChanged(order)
+    fun saveOrder(orderBottomToTop: List<PracticeList>) {
+        latestListsChanged.value(orderBottomToTop)
         listPreferences.edit()
-            .putString(LIST_ORDER_KEY, order.joinToString(",") { it.listId.toString() })
+            .putString(LIST_ORDER_KEY, orderBottomToTop.joinToString(",") { it.listId.toString() })
             .apply()
     }
 
@@ -88,20 +84,24 @@ fun ListsScreen(
         val savedIds = listPreferences.getString(LIST_ORDER_KEY, null)
             ?.split(',')
             ?.mapNotNull { it.toIntOrNull() }
+            ?.distinct()
             .orEmpty()
 
-        if (savedIds.isEmpty()) return databaseLists.sortedByDescending { it.createdAt }
+        if (savedIds.isEmpty()) {
+            // Oldest list is the first item in bottom-to-top order, hence appears at the bottom.
+            return databaseLists.sortedWith(compareBy<PracticeList> { it.createdAt }.thenBy { it.listId })
+        }
 
         val saved = savedIds.mapNotNull(byId::get)
         val savedSet = saved.map { it.listId }.toSet()
         val newlyAdded = databaseLists
             .filterNot { it.listId in savedSet }
-            .sortedByDescending { it.createdAt }
-        return newlyAdded + saved
+            .sortedWith(compareBy<PracticeList> { it.createdAt }.thenBy { it.listId })
+
+        // Keep saved order; append new lists so they appear above older entries.
+        return saved + newlyAdded
     }
 
-    // Refresh silently whenever the Lists page is entered. A cached snapshot stays
-    // visible while Room is queried, so the page never flashes an empty/loading view.
     LaunchedEffect(Unit) {
         runCatching { dao.getAllLists() }
             .onSuccess { saveOrder(orderFromDatabase(it)) }
@@ -117,22 +117,17 @@ fun ListsScreen(
         }
     }
 
-    val moveList: (Int, Int) -> Unit = { listId, indexDirection ->
+    val latestMoveList = rememberUpdatedState<(Int, Int) -> Unit> { listId, direction ->
         val current = latestLists.value
         val from = current.indexOfFirst { it.listId == listId }
-        val to = from + indexDirection
+        val to = from + direction
         if (from >= 0 && to in current.indices) {
             val reordered = current.toMutableList()
             val moved = reordered.removeAt(from)
             reordered.add(to, moved)
-            val newOrder = reordered.toList()
-            latestListsChanged.value(newOrder)
-            listPreferences.edit()
-                .putString(LIST_ORDER_KEY, newOrder.joinToString(",") { it.listId.toString() })
-                .apply()
+            saveOrder(reordered)
         }
     }
-    val latestMoveList = rememberUpdatedState(moveList)
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)
@@ -146,10 +141,7 @@ fun ListsScreen(
         )
 
         when {
-            cachedLists == null -> {
-                // First visit only: reserve space until the first database snapshot arrives.
-                Spacer(modifier = Modifier.weight(1f))
-            }
+            cachedLists == null -> Spacer(modifier = Modifier.weight(1f))
 
             currentLists.isEmpty() -> {
                 Surface(
@@ -181,54 +173,51 @@ fun ListsScreen(
 
             else -> {
                 Text(
-                    "Long-press the grip and drag a list to reorder it.",
+                    "Hold the grip and move a list up or down to reorder it.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                // `currentLists` is stored in bottom-to-top order. A normal LazyColumn
-                // receives the reversed display copy, leaving the newest/first item
-                // physically closest to the bottom of the screen.
+                // The list state itself is bottom-to-top. reverseLayout places index 0 at the bottom.
                 LazyColumn(
                     state = listState,
+                    reverseLayout = true,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    items(currentLists.asReversed(), key = { it.listId }) { list ->
+                    items(currentLists, key = { it.listId }) { list ->
                         val isDragging = draggingListId == list.listId
-                        val scale by animateFloatAsState(
-                            targetValue = if (isDragging) 1.025f else 1f,
-                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            label = "list-card-scale"
-                        )
 
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onListContentsClick(list.listId) }
                                 .animateItemPlacement(
-                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    )
                                 )
+                                .clickable { onListContentsClick(list.listId) }
                                 .graphicsLayer {
                                     translationY = if (isDragging) draggedOffsetY else 0f
-                                    scaleX = scale
-                                    scaleY = scale
-                                    shadowElevation = if (isDragging) 14.dp.toPx() else 1.dp.toPx()
+                                    scaleX = if (isDragging) 1.015f else 1f
+                                    scaleY = if (isDragging) 1.015f else 1f
+                                    shadowElevation = if (isDragging) 10.dp.toPx() else 1.dp.toPx()
                                 }
                                 .then(
                                     if (isDragging) Modifier.border(
                                         width = 1.dp,
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
                                         shape = MaterialTheme.shapes.large
                                     ) else Modifier
                                 ),
                             shape = MaterialTheme.shapes.large,
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 5.dp else 1.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isDragging) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
                                 } else MaterialTheme.colorScheme.surfaceVariant
                             )
                         ) {
@@ -243,34 +232,48 @@ fun ListsScreen(
                                     modifier = Modifier
                                         .size(width = 42.dp, height = 48.dp)
                                         .pointerInput(list.listId) {
-                                            var accumulatedDrag = 0f
                                             detectDragGesturesAfterLongPress(
                                                 onDragStart = {
-                                                    accumulatedDrag = 0f
                                                     draggedOffsetY = 0f
                                                     draggingListId = list.listId
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 },
                                                 onDrag = { change, dragAmount ->
                                                     change.consume()
-                                                    accumulatedDrag += dragAmount.y
-                                                    val measuredRowHeight = listState.layoutInfo.visibleItemsInfo
-                                                        .firstOrNull { it.key == list.listId }
-                                                        ?.size?.toFloat() ?: reorderFallbackPx
-                                                    val threshold = (measuredRowHeight * 0.52f).coerceAtLeast(1f)
+                                                    draggedOffsetY += dragAmount.y
 
-                                                    // Move one row at a time. In the logical bottom-to-top
-                                                    // order, dragging upward increases the stored index.
-                                                    if (accumulatedDrag <= -threshold) {
-                                                        latestMoveList.value(list.listId, +1)
-                                                        accumulatedDrag += threshold
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    } else if (accumulatedDrag >= threshold) {
-                                                        latestMoveList.value(list.listId, -1)
-                                                        accumulatedDrag -= threshold
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    // The active card follows the finger. When its centre crosses
+                                                    // the adjacent row's midpoint, swap the data order and offset
+                                                    // the active card by the slot movement so it stays under the finger.
+                                                    val direction = when {
+                                                        dragAmount.y < 0f -> 1  // Up = next higher bottom-to-top index.
+                                                        dragAmount.y > 0f -> -1
+                                                        else -> 0
                                                     }
-                                                    draggedOffsetY = accumulatedDrag
+                                                    val ordered = latestLists.value
+                                                    val fromIndex = ordered.indexOfFirst { it.listId == list.listId }
+                                                    val targetIndex = fromIndex + direction
+                                                    if (direction != 0 && fromIndex >= 0 && targetIndex in ordered.indices) {
+                                                        val visible = listState.layoutInfo.visibleItemsInfo
+                                                        val activeInfo = visible.firstOrNull { it.key == list.listId }
+                                                        val targetInfo = visible.firstOrNull { it.index == targetIndex }
+                                                        if (activeInfo != null && targetInfo != null) {
+                                                            val activeCenter = activeInfo.offset + activeInfo.size / 2f
+                                                            val targetCenter = targetInfo.offset + targetInfo.size / 2f
+                                                            val midpoint = (activeCenter + targetCenter) / 2f
+                                                            val draggedCenter = activeCenter + draggedOffsetY
+                                                            val crossed = if (direction > 0) {
+                                                                draggedCenter < midpoint
+                                                            } else {
+                                                                draggedCenter > midpoint
+                                                            }
+                                                            if (crossed) {
+                                                                latestMoveList.value(list.listId, direction)
+                                                                draggedOffsetY += activeInfo.offset - targetInfo.offset
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
+                                                        }
+                                                    }
                                                 },
                                                 onDragEnd = {
                                                     draggingListId = null
@@ -282,7 +285,7 @@ fun ListsScreen(
                                                 }
                                             )
                                         },
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(15.dp),
                                     color = if (isDragging) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surface
                                 ) {
@@ -304,12 +307,7 @@ fun ListsScreen(
                                     maxLines = 2
                                 )
 
-                                // The card itself opens the contents page. Keep the two
-                                // explicit actions on the trailing edge: Delete takes the
-                                // former Practice position, while Practice sits at the edge.
-                                IconButton(
-                                    onClick = { listPendingDeletion = list }
-                                ) {
+                                IconButton(onClick = { listPendingDeletion = list }) {
                                     Icon(
                                         Icons.Default.DeleteOutline,
                                         contentDescription = "Delete ${list.name}",
@@ -428,15 +426,16 @@ fun ListsScreen(
                             try {
                                 dao.deleteListItems(list.listId)
                                 dao.deletePracticeList(list.listId)
-                                val updated = latestLists.value.filterNot { it.listId == list.listId }
-                                saveOrder(updated)
+                                saveOrder(latestLists.value.filterNot { it.listId == list.listId })
                                 listPendingDeletion = null
                             } finally {
                                 isDeleting = false
                             }
                         }
                     }
-                ) { Text(if (isDeleting) "Deleting…" else "Delete", color = MaterialTheme.colorScheme.error) }
+                ) {
+                    Text(if (isDeleting) "Deleting…" else "Delete", color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = {
                 TextButton(
