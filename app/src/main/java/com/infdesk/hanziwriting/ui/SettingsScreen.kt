@@ -49,6 +49,9 @@ fun SettingsScreen() {
     var practiceCharactersIndividually by remember {
         mutableStateOf(practicePreferences.getBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, false))
     }
+    var useOriginalStrokes by remember {
+        mutableStateOf(practicePreferences.getBoolean(PracticePreferences.USE_ORIGINAL_STROKES, false))
+    }
 
     val exportListsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -220,20 +223,6 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.outline
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
-
-        PracticeSettingCard(
-            title = "Practice one character at a time",
-            description = "Complete all available learning steps for one Hanzi before moving to the next.",
-            checked = practiceCharactersIndividually,
-            onCheckedChange = { enabled ->
-                practiceCharactersIndividually = enabled
-                practicePreferences.edit()
-                    .putBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, enabled)
-                    .apply()
-            }
-        )
-
         Spacer(modifier = Modifier.weight(1f))
 
         statusMessage?.let {
@@ -247,6 +236,34 @@ fun SettingsScreen() {
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
             )
         }
+
+        PracticeSettingCard(
+            title = "Use original Hanzi strokes",
+            description = "After each correct stroke, show the original filled stroke shape instead of your rounded pen line.",
+            checked = useOriginalStrokes,
+            onCheckedChange = { enabled ->
+                useOriginalStrokes = enabled
+                practicePreferences.edit()
+                    .putBoolean(PracticePreferences.USE_ORIGINAL_STROKES, enabled)
+                    .apply()
+            }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        PracticeSettingCard(
+            title = "Practice one character at a time",
+            description = "Complete all available learning steps for one Hanzi before moving to the next.",
+            checked = practiceCharactersIndividually,
+            onCheckedChange = { enabled ->
+                practiceCharactersIndividually = enabled
+                practicePreferences.edit()
+                    .putBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, enabled)
+                    .apply()
+            }
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedButton(
             onClick = {
