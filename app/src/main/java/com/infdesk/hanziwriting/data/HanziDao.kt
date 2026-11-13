@@ -1,9 +1,6 @@
 package com.infdesk.hanziwriting.data
 
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
+import androidx.room.*
 
 @Dao
 interface HanziDao {
@@ -19,7 +16,6 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character")
     suspend fun getGraphics(character: String): HanziGraphics?
 
-    // Inserts ONLY if the character is missing (keeps the CC-CEDICT row when present).
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCharacter(character: HanziCharacter)
 
@@ -50,14 +46,21 @@ interface HanziDao {
     @Query("SELECT * FROM practice_lists WHERE name = :name ORDER BY listId LIMIT 1")
     suspend fun getListByName(name: String): PracticeList?
 
-    @Query("SELECT character FROM list_items WHERE listId = :listId")
+    // Keep the order in which the user added entries; the screen anchors the first entry at the bottom.
+    @Query("SELECT character FROM list_items WHERE listId = :listId ORDER BY rowid ASC")
     suspend fun getCharactersInList(listId: Int): List<String>
+
+    @Query("SELECT listId FROM list_items WHERE character = :character")
+    suspend fun getListIdsContainingCharacter(character: String): List<Int>
 
     @Query("DELETE FROM list_items WHERE listId = :listId")
     suspend fun deleteListItems(listId: Int)
 
     @Query("DELETE FROM practice_lists WHERE listId = :listId")
     suspend fun deletePracticeList(listId: Int)
+
+    @Query("DELETE FROM list_items WHERE listId = :listId AND character IN (:characters)")
+    suspend fun deleteSelectedListItems(listId: Int, characters: List<String>)
 
     @Query("DELETE FROM hanzi_characters")
     suspend fun clearCharacters()
