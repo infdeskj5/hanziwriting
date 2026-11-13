@@ -1,6 +1,7 @@
 package com.infdesk.hanziwriting.ui
 
 import android.content.Intent
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -42,6 +43,12 @@ fun SettingsScreen() {
 
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
+    val practicePreferences = remember {
+        context.getSharedPreferences(PracticePreferences.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var practiceCharactersIndividually by remember {
+        mutableStateOf(practicePreferences.getBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, false))
+    }
 
     val exportListsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -213,6 +220,20 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.outline
         )
 
+        Spacer(modifier = Modifier.height(18.dp))
+
+        PracticeSettingCard(
+            title = "Practice one character at a time",
+            description = "Complete all available learning steps for one Hanzi before moving to the next.",
+            checked = practiceCharactersIndividually,
+            onCheckedChange = { enabled ->
+                practiceCharactersIndividually = enabled
+                practicePreferences.edit()
+                    .putBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, enabled)
+                    .apply()
+            }
+        )
+
         Spacer(modifier = Modifier.weight(1f))
 
         statusMessage?.let {
@@ -307,6 +328,41 @@ fun SettingsScreen() {
                 Spacer(modifier = Modifier.width(7.dp))
                 Text("Export")
             }
+        }
+    }
+}
+
+
+@Composable
+private fun PracticeSettingCard(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 12.dp, top = 13.dp, bottom = 13.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
