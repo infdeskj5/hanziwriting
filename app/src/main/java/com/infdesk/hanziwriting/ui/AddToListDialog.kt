@@ -36,6 +36,7 @@ fun AddToListDialog(
     val nameFocusRequester = remember { FocusRequester() }
 
     var lists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
+    var alreadyAddedListIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var isLoading by remember { mutableStateOf(true) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
@@ -44,8 +45,12 @@ fun AddToListDialog(
 
     LaunchedEffect(item) {
         isLoading = true
-        lists = dao.getAllLists()
-        isLoading = false
+        try {
+            lists = dao.getAllLists()
+            alreadyAddedListIds = dao.getListIdsContainingCharacter(item).toSet()
+        } finally {
+            isLoading = false
+        }
     }
 
     // The TextField is created only after showCreateDialog becomes true.
@@ -136,7 +141,12 @@ fun AddToListDialog(
                 Column {
                     when {
                         isLoading -> {
-                            Spacer(modifier = Modifier.fillMaxWidth().height(72.dp))
+                            Box(
+                                modifier = Modifier.fillMaxWidth().height(72.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
                         }
                         lists.isEmpty() -> {
                             Text(
@@ -164,16 +174,32 @@ fun AddToListDialog(
                                                     dao.addCharacterToList(
                                                         ListItem(listId = list.listId, character = item)
                                                     )
+                                                    alreadyAddedListIds = alreadyAddedListIds + list.listId
                                                     onDismiss()
                                                 } finally {
                                                     isSaving = false
                                                 }
                                             }
                                         },
-                                        enabled = !isSaving,
+                                        enabled = !isSaving && list.listId !in alreadyAddedListIds,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text(list.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+                                        val alreadyAdded = list.listId in alreadyAddedListIds
+                                        Text(
+                                            list.name,
+                                            modifier = Modifier.weight(1f),
+                                            textAlign = TextAlign.Start,
+                                            color = if (alreadyAdded) {
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                                            } else MaterialTheme.colorScheme.primary
+                                        )
+                                        if (alreadyAdded) {
+                                            Text(
+                                                "Added",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+                                            )
+                                        }
                                     }
                                 }
                             }
