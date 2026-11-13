@@ -3,9 +3,10 @@ package com.infdesk.hanziwriting.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
+import kotlinx.coroutines.launch
 
 @Composable
 fun ListContentsScreen(
@@ -22,30 +24,32 @@ fun ListContentsScreen(
     onBackClick: () -> Unit,
     onPracticeSelectedClick: (List<String>) -> Unit
 ) {
-    // Consume Android system Back and return to the Lists screen instead of exiting the app.
     BackHandler(enabled = true, onBack = onBackClick)
 
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
+    val scope = rememberCoroutineScope()
 
     var characters by remember(listId) { mutableStateOf<List<String>>(emptyList()) }
     var listName by remember(listId) { mutableStateOf("List contents") }
     var isLoading by remember(listId) { mutableStateOf(true) }
+    var isDeleting by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
 
     LaunchedEffect(listId) {
         isLoading = true
         val allLists = dao.getAllLists()
         listName = allLists.firstOrNull { it.listId == listId }?.name ?: "List contents"
+        // DAO returns insertion order. With reverseLayout=true the oldest saved item
+        // is anchored to the bottom and newer items are stacked above it.
         characters = dao.getCharactersInList(listId).distinct()
         isLoading = false
-
-        // Remove stale selections if list contents have changed.
         onSelectionChange(selectedItems.intersect(characters.toSet()))
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp)
-    ) {
+    val selectedInDisplayOrder = characters.filter { it in selectedItems }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -65,13 +69,10 @@ fun ListContentsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         when {
-            isLoading -> {
-                // Keep the header/footer geometry without flashing a loading indicator.
-                Spacer(modifier = Modifier.weight(1f))
-            }
+            isLoading -> Spacer(modifier = Modifier.weight(1f))
 
             characters.isEmpty() -> {
                 Box(
@@ -83,34 +84,26 @@ fun ListContentsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                OutlinedButton(onClick = onBackClick, modifier = Modifier.fillMaxWidth()) {
+                    Text("Back to Lists")
+                }
             }
 
             else -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = { onSelectionChange(characters.toSet()) }) {
-                        Text("Select all")
-                    }
-                    TextButton(onClick = { onSelectionChange(emptySet()) }) {
-                        Text("Clear")
-                    }
-                }
-
-                // The database list remains in its natural order for practice.
-                // Only the display copy is reversed, so the first saved item is
-                // the one closest to the bottom edge / user's thumb.
-                val displayedCharacters = characters.asReversed()
+                // Item 0 is the physical bottom item; later entries are above it.
                 LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    reverseLayout = true,
+                    contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    itemsIndexed(displayedCharacters, key = { _, value -> value }) { _, item ->
+                    items(characters, key = { it }) { item ->
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.surfaceVariant
+                            color = if (item in selectedItems) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
+                            } else MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Row(
                                 modifier = Modifier
@@ -127,8 +120,7 @@ fun ListContentsScreen(
                                     checked = item in selectedItems,
                                     onCheckedChange = { checked ->
                                         onSelectionChange(
-                                            if (checked) selectedItems + item
-                                            else selectedItems - item
+                                            if (checked) selectedItems + item else selectedItems - item
                                         )
                                     }
                                 )
@@ -137,29 +129,88 @@ fun ListContentsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Bulk actions are fixed above the primary practice action for thumb reach.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = { showDeleteConfirmation = true },
+                        enabled = selectedInDisplayOrder.isNotEmpty() && !isDeleting,
+                        modifier = Modifier.weight(1.15f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Delete", color = MaterialTheme.colorScheme.error, maxLines = 1)
+                    }
+                    TextButton(
+                        onClick = { onSelectionChange(characters.toSet()) },
+                        enabled = !isDeleting,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) { Text("Select all", maxLines = 1) }
+                    TextButton(
+                        onClick = { onSelectionChange(emptySet()) },
+                        enabled = selectedItems.isNotEmpty() && !isDeleting,
+                        modifier = Modifier.weight(0.8f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) { Text("Clear", maxLines = 1) }
+                }
 
                 Button(
                     onClick = {
-                        val selected = characters.filter { it in selectedItems }
-                        if (selected.isNotEmpty()) onPracticeSelectedClick(selected)
+                        if (selectedInDisplayOrder.isNotEmpty()) {
+                            onPracticeSelectedClick(selectedInDisplayOrder)
+                        }
                     },
-                    enabled = selectedItems.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    enabled = selectedInDisplayOrder.isNotEmpty() && !isDeleting,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = MaterialTheme.shapes.large
                 ) {
-                    Text("Practice Selected (${selectedItems.size})")
+                    Text("Practice Selected (${selectedInDisplayOrder.size})")
                 }
             }
         }
+    }
 
-        if (!isLoading && characters.isEmpty()) {
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onBackClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Back to Lists")
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!isDeleting) showDeleteConfirmation = false },
+            title = { Text("Remove selected items?") },
+            text = {
+                Text("${selectedInDisplayOrder.size} selected item(s) will be removed from '$listName'.")
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isDeleting,
+                    onClick = {
+                        val toDelete = selectedInDisplayOrder.toList()
+                        scope.launch {
+                            isDeleting = true
+                            try {
+                                dao.deleteSelectedListItems(listId, toDelete)
+                                characters = characters.filterNot { it in toDelete }
+                                onSelectionChange(selectedItems - toDelete.toSet())
+                                showDeleteConfirmation = false
+                            } finally {
+                                isDeleting = false
+                            }
+                        }
+                    }
+                ) {
+                    Text(if (isDeleting) "Removing…" else "Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirmation = false },
+                    enabled = !isDeleting
+                ) { Text("Cancel") }
             }
-        }
+        )
     }
 }
