@@ -2,6 +2,7 @@ package com.infdesk.hanziwriting.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
@@ -132,6 +133,10 @@ fun HanziWritingApp() {
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
+    // Search state lives above SearchScreen so opening Word Details does not discard
+    // the completed query, results, or the user's scroll position.
+    var completedSearchQuery by remember { mutableStateOf("") }
+    val searchResultsListState = rememberLazyListState()
 
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
@@ -194,6 +199,9 @@ fun HanziWritingApp() {
                     onSearchQueryChange = { searchQuery = it },
                     searchResults = searchResults,
                     onResultsChange = { searchResults = it },
+                    completedSearchQuery = completedSearchQuery,
+                    onSearchCompleted = { completedSearchQuery = it },
+                    resultsListState = searchResultsListState,
                     onWordClick = { wordBackStack = listOf(it) }
                 )
 
@@ -231,6 +239,7 @@ fun HanziWritingApp() {
                                 selectedListItems = emptySet()
                             },
                             onWordClick = { item -> wordBackStack = listOf(item) },
+                            onPracticeItemClick = { item -> practiceCharacter = item },
                             onPracticeSelectedClick = { selected -> customPracticeItems = selected }
                         )
                     } else {
@@ -261,6 +270,9 @@ fun HanziWritingApp() {
                     onSearchQueryChange = { searchQuery = it },
                     searchResults = searchResults,
                     onResultsChange = { searchResults = it },
+                    completedSearchQuery = completedSearchQuery,
+                    onSearchCompleted = { completedSearchQuery = it },
+                    resultsListState = searchResultsListState,
                     onWordClick = { wordBackStack = listOf(it) }
                 )
             }
