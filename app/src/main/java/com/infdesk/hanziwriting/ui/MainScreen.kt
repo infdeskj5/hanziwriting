@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.AppState
@@ -88,6 +90,36 @@ fun InitializationFailureScreen(onRetry: () -> Unit) {
 
 @Composable
 fun HanziWritingApp() {
+    val context = LocalContext.current
+    val listDao = remember { AppDatabase.getDatabase(context).hanziDao() }
+    var cachedLists by remember { mutableStateOf<List<PracticeList>?>(null) }
+
+    fun applySavedListOrder(databaseLists: List<PracticeList>): List<PracticeList> {
+        val orderPreferences = context.getSharedPreferences(
+            "hanzi_list_order",
+            android.content.Context.MODE_PRIVATE
+        )
+        val savedIds = orderPreferences.getString("bottom_to_top_ids", null)
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.distinct()
+            .orEmpty()
+        val byId = databaseLists.associateBy { it.listId }
+        val saved = savedIds.mapNotNull(byId::get)
+        val savedSet = saved.map { it.listId }.toSet()
+        val additions = databaseLists
+            .filterNot { it.listId in savedSet }
+            .sortedWith(compareBy<PracticeList> { it.createdAt }.thenBy { it.listId })
+        return if (savedIds.isEmpty()) {
+            databaseLists.sortedWith(compareBy<PracticeList> { it.createdAt }.thenBy { it.listId })
+        } else saved + additions
+    }
+
+    LaunchedEffect(Unit) {
+        runCatching { listDao.getAllLists() }
+            .onSuccess { cachedLists = applySavedListOrder(it) }
+    }
+
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Search) }
     var wordBackStack by remember { mutableStateOf<List<String>>(emptyList()) }
     var practiceCharacter by remember { mutableStateOf<String?>(null) }
@@ -101,10 +133,6 @@ fun HanziWritingApp() {
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
 
-    // Keep the Lists snapshot above the navigation destinations. The Lists
-    // composable is recreated when switching tabs, but its content won't vanish.
-    var cachedLists by remember { mutableStateOf<List<PracticeList>?>(null) }
-
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
         customPracticeItems != null -> "CustomListPractice"
@@ -113,6 +141,15 @@ fun HanziWritingApp() {
         practiceCharacter != null -> "Practice"
         currentWord != null -> "WordPage"
         else -> currentScreen.name
+    }
+
+    LaunchedEffect(displayState) {
+        // Refresh lists when returning from Search or Settings, but keep the previous
+        // snapshot visible while the database read runs (no empty/loading flash).
+        if (displayState == "Lists") {
+            runCatching { listDao.getAllLists() }
+                .onSuccess { cachedLists = applySavedListOrder(it) }
+        }
     }
 
     Scaffold(
