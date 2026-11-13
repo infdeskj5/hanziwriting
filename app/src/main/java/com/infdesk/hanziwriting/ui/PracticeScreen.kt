@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -30,8 +31,17 @@ fun PracticeScreen(
     BackHandler(enabled = true) { onBackClick() }
 
     val context = LocalContext.current
-    val viewModel = remember {
-        PracticeViewModel(AppDatabase.getDatabase(context))
+    val practicePreferences = remember {
+        context.getSharedPreferences(PracticePreferences.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    val practiceCharactersIndividually = remember {
+        practicePreferences.getBoolean(PracticePreferences.PRACTICE_CHARACTERS_INDIVIDUALLY, false)
+    }
+    val viewModel = remember(practiceCharactersIndividually) {
+        PracticeViewModel(
+            AppDatabase.getDatabase(context),
+            practiceCharactersIndividually = practiceCharactersIndividually
+        )
     }
 
     LaunchedEffect(wordToPractice) {
