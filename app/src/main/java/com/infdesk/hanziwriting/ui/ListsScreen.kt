@@ -32,8 +32,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.zIndex
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.delay
@@ -196,14 +195,18 @@ fun ListsScreen(
                                 )
                                 .clickable { onListContentsClick(list.listId) }
                                 .graphicsLayer {
-                                    // State is read in the graphics layer lambda, avoiding a full
-                                    // composition on every pointer-move event.
+                                    // Keep the dragged card visually lifted and above every
+                                    // neighbour. Pointer movement only updates this graphics
+                                    // layer, not the card's entire composable tree.
                                     val active = draggingListId == list.listId
                                     translationY = if (active) draggedOffsetY else 0f
-                                    scaleX = if (active) 1.018f else 1f
-                                    scaleY = if (active) 1.018f else 1f
-                                    shadowElevation = if (active) 12.dp.toPx() else 1.dp.toPx()
+                                    scaleX = if (active) 1.025f else 1f
+                                    scaleY = if (active) 1.025f else 1f
+                                    shadowElevation = if (active) 18.dp.toPx() else 1.dp.toPx()
                                 }
+                                // zIndex is essential here: animated neighbours must render
+                                // beneath the lifted card while their slots are changing.
+                                .zIndex(if (isDragging) 10f else 0f)
                                 .then(
                                     if (isDragging) Modifier.border(
                                         width = 1.dp,
@@ -212,7 +215,7 @@ fun ListsScreen(
                                     ) else Modifier
                                 ),
                             shape = MaterialTheme.shapes.large,
-                            elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 5.dp else 1.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isDragging) {
                                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
