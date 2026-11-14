@@ -137,6 +137,8 @@ fun HanziWritingApp() {
     // the completed query, results, or the user's scroll position.
     var completedSearchQuery by remember { mutableStateOf("") }
     val searchResultsListState = rememberLazyListState()
+    // Keep Lists scroll position alive while List Contents is displayed.
+    val listsLazyListState = rememberLazyListState()
 
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
@@ -150,13 +152,21 @@ fun HanziWritingApp() {
         else -> currentScreen.name
     }
 
+    var previousDisplayState by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(displayState) {
-        // Refresh lists when returning from Search or Settings, but keep the previous
-        // snapshot visible while the database read runs (no empty/loading flash).
-        if (displayState == "Lists") {
+        // List Contents cannot create/delete a list, so returning from it should reuse
+        // the existing snapshot and LazyColumn state without a database refresh.
+        // Other routes may create lists, so refresh when returning from those routes.
+        val returningFromListContents =
+            displayState == "Lists" && previousDisplayState == "ListContents"
+
+        if (displayState == "Lists" && !returningFromListContents) {
             runCatching { listDao.getAllLists() }
                 .onSuccess { cachedLists = applySavedListOrder(it) }
         }
+
+        previousDisplayState = displayState
     }
 
     Scaffold(
@@ -219,6 +229,7 @@ fun HanziWritingApp() {
 
                 "Lists" -> ListsScreen(
                     cachedLists = cachedLists,
+                    listState = listsLazyListState,
                     onListsChanged = { cachedLists = it },
                     onPracticeListClick = { practiceListId = it },
                     onListContentsClick = {
