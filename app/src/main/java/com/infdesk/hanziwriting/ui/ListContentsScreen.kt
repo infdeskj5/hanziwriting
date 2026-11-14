@@ -122,14 +122,6 @@ fun ListContentsScreen(
                                     style = MaterialTheme.typography.titleLarge,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Checkbox(
-                                    checked = item in selectedItems,
-                                    onCheckedChange = { checked ->
-                                        onSelectionChange(
-                                            if (checked) selectedItems + item else selectedItems - item
-                                        )
-                                    }
-                                )
                                 IconButton(
                                     onClick = { onPracticeItemClick(item) },
                                     modifier = Modifier.size(42.dp)
@@ -150,6 +142,14 @@ fun ListContentsScreen(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
+                                Checkbox(
+                                    checked = item in selectedItems,
+                                    onCheckedChange = { checked ->
+                                        onSelectionChange(
+                                            if (checked) selectedItems + item else selectedItems - item
+                                        )
+                                    }
+                                )
                             }
                         }
                     }
