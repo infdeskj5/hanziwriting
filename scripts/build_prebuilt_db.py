@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Build the pre-populated SQLite database used by HanziWriting's Room layer.
+"""Build the Hanzi Writing Room database and separate curriculum metadata DB.
 
-Only Python's standard library is required. It mirrors AssetParser.kt:
-- CEDICT rows are inserted/replaced by the simplified word key.
-- MakeMeAHanzi dictionary data inserts missing characters, then updates radicals,
-  decomposition, matchesJson and mmaDefinition without replacing CEDICT definitions.
-- Graphics rows retain their original JSON line.
+Python standard library only. Run from the repository root:
+  python scripts/build_prebuilt_db.py \
+    --assets-dir app/src/main/assets \
+    --output app/src/main/assets/hanzi_database_prebuilt.db \
+    --metadata-output app/src/main/assets/hanzi_vocabulary_metadata.db
 """
-
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import re
 import sqlite3
@@ -18,293 +18,557 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-ROOM_DB_VERSION = 2
-CEDICT_PATTERN = re.compile(r"^(.+?)\s+(.+?)\s+\[(.+?)\]\s+/(.+)/$")
+ROOM_DATABASE_VERSION = 3
+METADATA_DATABASE_VERSION = 1
+CEDICT_PATTERN = re.compile(r"^(\S+)\s+(\S+)\s+\[(.+?)\]\s+/(.+)/$")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS `hanzi_characters` (
-    `character` TEXT NOT NULL,
-    `pinyin` TEXT NOT NULL,
-    `definition` TEXT NOT NULL,
-    `radical` TEXT NOT NULL,
-    `decomposition` TEXT NOT NULL,
-    `matchesJson` TEXT NOT NULL,
-    `mmaDefinition` TEXT NOT NULL,
-    PRIMARY KEY(`character`)
+MAIN_SCHEMA = """
+CREATE TABLE hanzi_characters (
+    character TEXT NOT NULL PRIMARY KEY,
+    pinyin TEXT NOT NULL,
+    definition TEXT NOT NULL,
+    radical TEXT NOT NULL,
+    decomposition TEXT NOT NULL,
+    matchesJson TEXT NOT NULL,
+    mmaDefinition TEXT NOT NULL
 );
+CREATE TABLE hanzi_graphics (
+    character TEXT NOT NULL PRIMARY KEY,
+    rawJson TEXT NOT NULL
+);
+CREATE TABLE practice_lists (
+    listId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt INTEGER NOT NULL
+);
+CREATE TABLE list_items (
+    listId INTEGER NOT NULL,
+    character TEXT NOT NULL,
+    PRIMARY KEY(listId, character)
+);
+CREATE TABLE hanzi_word_forms (
+    simplified TEXT NOT NULL,
+    traditional TEXT NOT NULL,
+    PRIMARY KEY(simplified, traditional)
+);
+CREATE INDEX index_hanzi_word_forms_traditional ON hanzi_word_forms(traditional);
+CREATE TABLE vocabulary_entries (
+    source TEXT NOT NULL,
+    entryId TEXT NOT NULL,
+    level TEXT NOT NULL,
+    simplified TEXT NOT NULL,
+    traditional TEXT NOT NULL,
+    preferredForm TEXT NOT NULL,
+    pinyin TEXT NOT NULL,
+    partOfSpeech TEXT NOT NULL,
+    sortOrder INTEGER NOT NULL,
+    PRIMARY KEY(source, entryId)
+);
+CREATE INDEX index_vocabulary_entries_source_level ON vocabulary_entries(source, level);
+CREATE INDEX index_vocabulary_entries_simplified ON vocabulary_entries(simplified);
+CREATE INDEX index_vocabulary_entries_traditional ON vocabulary_entries(traditional);
+CREATE TABLE study_list_bindings (
+    source TEXT NOT NULL,
+    level TEXT NOT NULL,
+    listId INTEGER NOT NULL,
+    PRIMARY KEY(source, level)
+);
+CREATE INDEX index_study_list_bindings_listId ON study_list_bindings(listId);
+"""
 
-CREATE TABLE IF NOT EXISTS `hanzi_graphics` (
-    `character` TEXT NOT NULL,
-    `rawJson` TEXT NOT NULL,
-    PRIMARY KEY(`character`)
+METADATA_SCHEMA = """
+CREATE TABLE hanzi_word_forms (
+    simplified TEXT NOT NULL,
+    traditional TEXT NOT NULL,
+    PRIMARY KEY(simplified, traditional)
 );
-
-CREATE TABLE IF NOT EXISTS `practice_lists` (
-    `listId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-    `name` TEXT NOT NULL,
-    `createdAt` INTEGER NOT NULL
+CREATE INDEX index_hanzi_word_forms_traditional ON hanzi_word_forms(traditional);
+CREATE TABLE vocabulary_entries (
+    source TEXT NOT NULL,
+    entryId TEXT NOT NULL,
+    level TEXT NOT NULL,
+    simplified TEXT NOT NULL,
+    traditional TEXT NOT NULL,
+    preferredForm TEXT NOT NULL,
+    pinyin TEXT NOT NULL,
+    partOfSpeech TEXT NOT NULL,
+    sortOrder INTEGER NOT NULL,
+    PRIMARY KEY(source, entryId)
 );
-
-CREATE TABLE IF NOT EXISTS `list_items` (
-    `listId` INTEGER NOT NULL,
-    `character` TEXT NOT NULL,
-    PRIMARY KEY(`listId`, `character`)
-);
+CREATE INDEX index_vocabulary_entries_source_level ON vocabulary_entries(source, level);
+CREATE INDEX index_vocabulary_entries_simplified ON vocabulary_entries(simplified);
+CREATE INDEX index_vocabulary_entries_traditional ON vocabulary_entries(traditional);
 """
 
 
-def as_gson_string(value: Any, default: str = "") -> str:
-    """Approximate Gson JsonElement.asString for primitive JSON values."""
+def read_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8-sig") as handle:
+        return json.load(handle)
+
+
+def require_file(assets: Path, name: str) -> Path:
+    path = assets / name
+    if not path.is_file() or path.stat().st_size == 0:
+        raise FileNotFoundError(f"Required source file is missing or empty: {path}")
+    return path
+
+
+def json_records(payload: Any, dataset_name: str) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = payload.get("data") or payload.get("rows") or payload.get("entries") or payload.get("words")
+    else:
+        rows = None
+    if not isinstance(rows, list):
+        raise ValueError(f"{dataset_name}: expected a top-level list or an object with a data array")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def clean_text(value: Any) -> str:
     if value is None:
-        return default
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (str, int, float)):
+        return ""
+    if isinstance(value, (int, float)):
         return str(value)
-    return default
+    return str(value).strip()
 
 
-def flush_rows(connection: sqlite3.Connection, sql: str, rows: list[tuple], batch_size: int = 2000) -> None:
-    if rows:
-        connection.executemany(sql, rows)
-        rows.clear()
+def create_database(path: Path, schema: str, user_version: int) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    connection = sqlite3.connect(path)
+    connection.executescript(schema)
+    connection.execute(f"PRAGMA user_version={int(user_version)}")
+    return connection
 
 
-def parse_cedict(connection: sqlite3.Connection, source: Path) -> int:
-    insert_sql = """
-        INSERT OR REPLACE INTO hanzi_characters
-        (character, pinyin, definition, radical, decomposition, matchesJson, mmaDefinition)
-        VALUES (?, ?, ?, '', '', '', '')
-    """
-    batch: list[tuple] = []
-    inserted = 0
+def add_form(form_set: set[tuple[str, str]], simplified: str, traditional: str) -> None:
+    simplified = clean_text(simplified)
+    traditional = clean_text(traditional)
+    if simplified and traditional:
+        form_set.add((simplified, traditional))
 
-    with source.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+
+def parse_cedict(path: Path, main: sqlite3.Connection) -> tuple[set[tuple[str, str]], dict[str, collections.Counter[str]]]:
+    forms: set[tuple[str, str]] = set()
+    traditional_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    char_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    rows: list[tuple[str, str, str, str, str, str, str]] = []
+
+    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
         for line in handle:
-            line = line.rstrip("\r\n")
-            if not line or line.startswith("#"):
+            if not line.strip() or line.startswith("#"):
                 continue
-            match = CEDICT_PATTERN.match(line)
+            match = CEDICT_PATTERN.match(line.rstrip("\r\n"))
             if not match:
                 continue
-            _traditional, simplified, pinyin, definition = match.groups()
-            batch.append((simplified, pinyin, definition.replace("/", ", ")))
-            inserted += 1
-            if len(batch) >= 2000:
-                connection.executemany(insert_sql, batch)
-                batch.clear()
+            traditional, simplified, pinyin, definition = match.groups()
+            add_form(forms, simplified, traditional)
+            traditional_counts[simplified][traditional] += 1
+            if len(simplified) == 1 and len(traditional) == 1:
+                char_counts[simplified][traditional] += 1
+            rows.append((simplified, pinyin, definition.replace("/", ", "), "", "", "", ""))
+            if len(rows) >= 2000:
+                main.executemany(
+                    "INSERT OR REPLACE INTO hanzi_characters "
+                    "(character,pinyin,definition,radical,decomposition,matchesJson,mmaDefinition) "
+                    "VALUES (?,?,?,?,?,?,?)", rows
+                )
+                rows.clear()
+    if rows:
+        main.executemany(
+            "INSERT OR REPLACE INTO hanzi_characters "
+            "(character,pinyin,definition,radical,decomposition,matchesJson,mmaDefinition) "
+            "VALUES (?,?,?,?,?,?,?)", rows
+        )
 
-    if batch:
-        connection.executemany(insert_sql, batch)
-    return inserted
+    return forms, traditional_counts
 
 
-def parse_dictionary(connection: sqlite3.Connection, source: Path) -> int:
-    insert_sql = """
-        INSERT OR IGNORE INTO hanzi_characters
-        (character, pinyin, definition, radical, decomposition, matchesJson, mmaDefinition)
-        VALUES (?, ?, '', '', '', '', '')
-    """
-    update_sql = """
-        UPDATE hanzi_characters
-        SET radical = ?, decomposition = ?, matchesJson = ?, mmaDefinition = ?
-        WHERE character = ?
-    """
-    insert_batch: list[tuple] = []
-    update_batch: list[tuple] = []
-    processed = 0
-
-    with source.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+def parse_makemeahanzi_dictionary(path: Path, main: sqlite3.Connection) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
             try:
-                entry = json.loads(line)
-                if not isinstance(entry, dict):
-                    continue
-                character = as_gson_string(entry.get("character"))
+                row = json.loads(line)
+                character = clean_text(row.get("character"))
                 if not character:
                     continue
-
-                pinyin_values = entry.get("pinyin")
-                if isinstance(pinyin_values, list):
-                    pinyin = " ".join(as_gson_string(item) for item in pinyin_values)
-                else:
-                    pinyin = ""
-
-                matches = (
-                    json.dumps(entry["matches"], ensure_ascii=False, separators=(",", ":"))
-                    if "matches" in entry
-                    else ""
+                pinyin_items = row.get("pinyin") or []
+                pinyin = " ".join(clean_text(item) for item in pinyin_items if clean_text(item))
+                radical = clean_text(row.get("radical"))
+                decomposition = clean_text(row.get("decomposition"))
+                matches = json.dumps(row.get("matches", []), ensure_ascii=False, separators=(",", ":"))
+                definition = clean_text(row.get("definition"))
+                main.execute(
+                    "INSERT OR IGNORE INTO hanzi_characters "
+                    "(character,pinyin,definition,radical,decomposition,matchesJson,mmaDefinition) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (character, pinyin, "", radical, decomposition, matches, definition)
                 )
-
-                radical = as_gson_string(entry.get("radical"))
-                decomposition = as_gson_string(entry.get("decomposition"))
-                mma_definition = as_gson_string(entry.get("definition"))
-
-                insert_batch.append((character, pinyin))
-                update_batch.append((radical, decomposition, matches, mma_definition, character))
-                processed += 1
-
-                if len(insert_batch) >= 2000:
-                    connection.executemany(insert_sql, insert_batch)
-                    connection.executemany(update_sql, update_batch)
-                    insert_batch.clear()
-                    update_batch.clear()
-            except (json.JSONDecodeError, TypeError, ValueError):
+                main.execute(
+                    "UPDATE hanzi_characters SET radical=?, decomposition=?, matchesJson=?, mmaDefinition=? "
+                    "WHERE character=?",
+                    (radical, decomposition, matches, definition, character)
+                )
+                count += 1
+            except (ValueError, TypeError, json.JSONDecodeError):
                 continue
-
-    if insert_batch:
-        connection.executemany(insert_sql, insert_batch)
-        connection.executemany(update_sql, update_batch)
-    return processed
+    return count
 
 
-def parse_graphics(connection: sqlite3.Connection, source: Path) -> int:
-    insert_sql = """
-        INSERT OR REPLACE INTO hanzi_graphics (character, rawJson)
-        VALUES (?, ?)
-    """
-    batch: list[tuple] = []
-    processed = 0
-
-    with source.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+def parse_graphics(path: Path, main: sqlite3.Connection) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
         for line in handle:
-            raw_line = line.rstrip("\r\n")
-            if not raw_line.strip():
+            line = line.strip()
+            if not line:
                 continue
             try:
-                entry = json.loads(raw_line)
-                if not isinstance(entry, dict):
-                    continue
-                character = as_gson_string(entry.get("character"))
+                row = json.loads(line)
+                character = clean_text(row.get("character"))
                 if not character:
                     continue
-
-                # Match AssetParser exactly: keep the source JSON line verbatim.
-                batch.append((character, raw_line))
-                processed += 1
-                if len(batch) >= 2000:
-                    connection.executemany(insert_sql, batch)
-                    batch.clear()
-            except (json.JSONDecodeError, TypeError, ValueError):
+                main.execute(
+                    "INSERT OR REPLACE INTO hanzi_graphics(character,rawJson) VALUES (?,?)",
+                    (character, line)
+                )
+                count += 1
+            except (ValueError, TypeError, json.JSONDecodeError):
                 continue
-
-    if batch:
-        connection.executemany(insert_sql, batch)
-    return processed
+    return count
 
 
-def validate_database(database_path: Path) -> tuple[int, int, int]:
-    if not database_path.is_file() or database_path.stat().st_size == 0:
-        raise RuntimeError(f"Prebuilt database does not exist or is empty: {database_path}")
-
-    connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
-    try:
-        version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version != ROOM_DB_VERSION:
-            raise RuntimeError(f"Expected Room DB version {ROOM_DB_VERSION}, found {version}")
-
-        expected_tables = {"hanzi_characters", "hanzi_graphics", "practice_lists", "list_items"}
-        actual_tables = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        missing = expected_tables - actual_tables
-        if missing:
-            raise RuntimeError(f"Missing Room table(s): {', '.join(sorted(missing))}")
-
-        characters = connection.execute("SELECT COUNT(*) FROM hanzi_characters").fetchone()[0]
-        graphics = connection.execute("SELECT COUNT(*) FROM hanzi_graphics").fetchone()[0]
-        lists = connection.execute("SELECT COUNT(*) FROM practice_lists").fetchone()[0]
-        items = connection.execute("SELECT COUNT(*) FROM list_items").fetchone()[0]
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-
-        if characters <= 0 or graphics <= 0:
-            raise RuntimeError(
-                f"Database is incomplete: {characters} characters, {graphics} graphics"
-            )
-        if lists != 0 or items != 0:
-            raise RuntimeError("A fresh prebuilt database must not contain user practice lists.")
-        if integrity != "ok":
-            raise RuntimeError(f"SQLite integrity_check failed: {integrity}")
-
-        return characters, graphics, version
-    finally:
-        connection.close()
-
-
-def build_database(assets_dir: Path, output: Path) -> None:
-    cedict = assets_dir / "cedict_ts.u8"
-    dictionary = assets_dir / "dictionary.txt"
-    graphics = assets_dir / "graphics.txt"
-
-    for source in (cedict, dictionary, graphics):
-        if not source.is_file() or source.stat().st_size == 0:
-            raise FileNotFoundError(f"Required input asset is missing or empty: {source}")
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
-        output.unlink()
-
-    connection = sqlite3.connect(output)
-    try:
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=OFF")
-        connection.execute("PRAGMA temp_store=MEMORY")
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.executescript(SCHEMA)
-
-        print("Importing CC-CEDICT…", flush=True)
-        cedict_rows = parse_cedict(connection, cedict)
-        connection.commit()
-        print(f"  Parsed {cedict_rows:,} CEDICT rows", flush=True)
-
-        print("Importing MakeMeAHanzi radicals and components…", flush=True)
-        dictionary_rows = parse_dictionary(connection, dictionary)
-        connection.commit()
-        print(f"  Processed {dictionary_rows:,} dictionary records", flush=True)
-
-        print("Importing original stroke graphics…", flush=True)
-        graphics_rows = parse_graphics(connection, graphics)
-        connection.commit()
-        print(f"  Processed {graphics_rows:,} graphics records", flush=True)
-
-        # Match @Database(version = 2). Room will create and populate
-        # room_master_table itself after validating this prepackaged schema.
-        connection.execute(f"PRAGMA user_version={ROOM_DB_VERSION}")
-        connection.commit()
-    finally:
-        connection.close()
-
-    characters, graphics_count, version = validate_database(output)
-    print(
-        f"Prebuilt Room database ready: {characters:,} characters, "
-        f"{graphics_count:,} graphics, schema version {version}. "
-        f"File size: {output.stat().st_size / (1024 * 1024):.1f} MiB",
-        flush=True,
+def upsert_vocabulary_character(
+    main: sqlite3.Connection,
+    simplified: str,
+    pinyin: str,
+    definition: str
+) -> None:
+    """Keep existing CC-CEDICT/MMaH values, while filling missing word entries."""
+    simplified = clean_text(simplified)
+    if not simplified:
+        return
+    pinyin = clean_text(pinyin)
+    definition = clean_text(definition)
+    main.execute(
+        "INSERT OR IGNORE INTO hanzi_characters "
+        "(character,pinyin,definition,radical,decomposition,matchesJson,mmaDefinition) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (simplified, pinyin, definition, "", "", "[]", "")
+    )
+    main.execute(
+        "UPDATE hanzi_characters SET "
+        "pinyin=CASE WHEN pinyin='' THEN ? ELSE pinyin END, "
+        "definition=CASE WHEN definition='' THEN ? ELSE definition END "
+        "WHERE character=?",
+        (pinyin, definition, simplified)
     )
 
 
-def main() -> int:
+def traditional_for_simplified(
+    simplified: str,
+    exact_counts: dict[str, collections.Counter[str]],
+    char_map: dict[str, str],
+    forms_by_simplified: dict[str, set[str]]
+) -> str:
+    if not simplified:
+        return ""
+    exact = exact_counts.get(simplified)
+    if exact:
+        # Prefer a non-identical Traditional spelling when one is present; ties
+        # remain deterministic and are based on CC-CEDICT occurrence counts.
+        ordered = sorted(exact.items(), key=lambda item: (-item[1], item[0]))
+        changed = next((traditional for traditional, _ in ordered if traditional != simplified), None)
+        if changed:
+            return changed
+
+    # The indexed mapping avoids scanning the entire CEDICT/TOCFL pair set once
+    # for every HSK record (an expensive O(entries * pairs) build-time operation).
+    # It also catches cases where CEDICT has only an identity spelling but TOCFL
+    # supplies the explicit Traditional counterpart.
+    supplied_pairs = sorted(
+        traditional for traditional in forms_by_simplified.get(simplified, set())
+        if traditional != simplified
+    )
+    if supplied_pairs:
+        return supplied_pairs[0]
+    if exact:
+        return sorted(exact.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    return "".join(char_map.get(char, char) for char in simplified)
+
+
+def parse_hsk(
+    path: Path,
+    exact_counts: dict[str, collections.Counter[str]],
+    char_map: dict[str, str],
+    forms: set[tuple[str, str]],
+    forms_by_simplified: dict[str, set[str]],
+    main: sqlite3.Connection
+) -> list[tuple[Any, ...]]:
+    payload = read_json(path)
+    records = json_records(payload, "HSK dataset")
+    entries: list[tuple[Any, ...]] = []
+    for index, row in enumerate(records):
+        simplified = clean_text(row.get("hanzi") or row.get("word") or row.get("simplified"))
+        if not simplified:
+            continue
+        raw_level = clean_text(row.get("level") or row.get("band"))
+        if raw_level in {"7", "8", "9", "7-9", "7–9"}:
+            level = "7-9"
+        elif raw_level.isdigit() and 1 <= int(raw_level) <= 6:
+            level = str(int(raw_level))
+        else:
+            raise ValueError(f"HSK dataset row {index + 1}: unexpected level {raw_level!r}")
+        traditional = traditional_for_simplified(
+            simplified, exact_counts, char_map, forms_by_simplified
+        )
+        add_form(forms, simplified, traditional)
+        forms_by_simplified.setdefault(simplified, set()).add(traditional)
+        pinyin = clean_text(row.get("pinyin"))
+        meaning = clean_text(row.get("meaning") or row.get("definition"))
+        upsert_vocabulary_character(main, simplified, pinyin, meaning)
+        part_of_speech = clean_text(row.get("part_of_speech") or row.get("pos"))
+        stable_id = clean_text(row.get("id")) or f"{raw_level}-{index + 1:05d}"
+        entries.append((
+            "HSK", stable_id, level, simplified, traditional, simplified,
+            pinyin, part_of_speech, index
+        ))
+    if not entries:
+        raise ValueError("HSK dataset contains no usable vocabulary entries")
+    return entries
+
+
+def parse_tocfl(path: Path, forms: set[tuple[str, str]], main: sqlite3.Connection) -> list[tuple[Any, ...]]:
+    payload = read_json(path)
+    records = json_records(payload, "TOCFL dataset")
+    entries: list[tuple[Any, ...]] = []
+    for index, row in enumerate(records):
+        simplified = clean_text(row.get("simp") or row.get("simplified") or row.get("Simplified"))
+        traditional = clean_text(row.get("trad") or row.get("traditional") or row.get("Traditional"))
+        if not simplified and not traditional:
+            continue
+        if not simplified:
+            simplified = traditional
+        if not traditional:
+            traditional = simplified
+
+        raw_level = row.get("tocfl_level", row.get("level", row.get("TOCFL Level")))
+        try:
+            number = float(raw_level)
+        except (TypeError, ValueError):
+            band = clean_text(row.get("tocfl_band") or row.get("level_label")).lower()
+            mapping = {
+                "novice 1": "N1", "novice 2": "N2",
+                "level 1": "1", "level 2": "2", "level 3": "3",
+                "level 4": "4", "level 5": "5"
+            }
+            level = mapping.get(band)
+            if level is None:
+                raise ValueError(f"TOCFL dataset row {index + 1}: unexpected level {raw_level!r}")
+        else:
+            if abs(number - 0.1) < 0.00001:
+                level = "N1"
+            elif abs(number - 0.2) < 0.00001:
+                level = "N2"
+            elif number.is_integer() and 1 <= int(number) <= 5:
+                level = str(int(number))
+            else:
+                raise ValueError(f"TOCFL dataset row {index + 1}: unexpected level {raw_level!r}")
+
+        add_form(forms, simplified, traditional)
+        pinyin = clean_text(row.get("pinyin") or row.get("Pinyin"))
+        definitions = clean_text(row.get("definitions") or row.get("definition"))
+        upsert_vocabulary_character(main, simplified, pinyin, definitions)
+        pos = clean_text(row.get("pos") or row.get("POS"))
+        stable_id = clean_text(row.get("id") or row.get("ID")) or f"tocfl-{index + 1:05d}"
+        entries.append((
+            "TOCFL", stable_id, level, simplified, traditional,
+            traditional, pinyin, pos, index
+        ))
+    if not entries:
+        raise ValueError("TOCFL dataset contains no usable vocabulary entries")
+    return entries
+
+
+def add_traditional_graphics_aliases(main: sqlite3.Connection, forms: set[tuple[str, str]]) -> int:
+    """Create minimal character rows so PracticeViewModel can animate trad glyphs.
+
+    PracticeViewModel requires both a HanziCharacter row and a graphics row. The
+    source dictionary is Simplified-first, so traditional glyphs with real
+    MakeMeAHanzi graphics receive a minimal alias row. We intentionally leave IDS
+    component data empty rather than pretending the simplified decomposition is
+    exact for the traditional form.
+    """
+    aliases: dict[str, tuple[str, str]] = {}
+    for simplified, traditional in sorted(forms):
+        if len(simplified) != 1 or len(traditional) != 1 or simplified == traditional:
+            continue
+        has_graphics = main.execute(
+            "SELECT 1 FROM hanzi_graphics WHERE character=? LIMIT 1", (traditional,)
+        ).fetchone()
+        if not has_graphics:
+            continue
+        source_row = main.execute(
+            "SELECT pinyin, definition FROM hanzi_characters WHERE character=? LIMIT 1",
+            (simplified,)
+        ).fetchone()
+        if source_row and traditional not in aliases:
+            aliases[traditional] = (clean_text(source_row[0]), clean_text(source_row[1]))
+
+    rows = [
+        (character, pinyin, definition, "", "", "[]", "")
+        for character, (pinyin, definition) in aliases.items()
+    ]
+    main.executemany(
+        "INSERT OR IGNORE INTO hanzi_characters "
+        "(character,pinyin,definition,radical,decomposition,matchesJson,mmaDefinition) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows
+    )
+    return len(rows)
+
+
+def insert_metadata(forms: set[tuple[str, str]], entries: list[tuple[Any, ...]], *connections: sqlite3.Connection) -> None:
+    ordered_forms = sorted(forms)
+    form_rows = [(simplified, traditional) for simplified, traditional in ordered_forms]
+    for connection in connections:
+        connection.executemany(
+            "INSERT OR IGNORE INTO hanzi_word_forms(simplified,traditional) VALUES (?,?)",
+            form_rows
+        )
+        connection.executemany(
+            "INSERT OR IGNORE INTO vocabulary_entries "
+            "(source,entryId,level,simplified,traditional,preferredForm,pinyin,partOfSpeech,sortOrder) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            entries
+        )
+
+
+def check_db(path: Path, expected_version: int, required_tables: set[str]) -> dict[str, int]:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise ValueError(f"Database is missing or empty: {path}")
+    connection = sqlite3.connect(path)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise ValueError(f"Database integrity check failed for {path}: {integrity}")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version != expected_version:
+            raise ValueError(f"Unexpected SQLite user_version in {path}: {version} (expected {expected_version})")
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        missing = required_tables - tables
+        if missing:
+            raise ValueError(f"Missing tables in {path}: {sorted(missing)}")
+        counts = {}
+        for table in sorted(required_tables):
+            counts[table] = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        return counts
+    finally:
+        connection.close()
+
+
+def build(assets: Path, main_path: Path, metadata_path: Path) -> None:
+    cedict = require_file(assets, "cedict_ts.u8")
+    dictionary = require_file(assets, "dictionary.txt")
+    graphics = require_file(assets, "graphics.txt")
+    hsk_path = require_file(assets, "hsk-3.0-words-all.json")
+    tocfl_path = require_file(assets, "tocfl-words.json")
+
+    main = create_database(main_path, MAIN_SCHEMA, ROOM_DATABASE_VERSION)
+    metadata = create_database(metadata_path, METADATA_SCHEMA, METADATA_DATABASE_VERSION)
+    try:
+        forms, exact_counts = parse_cedict(cedict, main)
+        character_counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+        for simple, trad in forms:
+            if len(simple) == 1 and len(trad) == 1:
+                character_counts[simple][trad] += 1
+        char_map = {
+            simple: sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            for simple, counts in character_counts.items() if counts
+        }
+
+        dictionary_count = parse_makemeahanzi_dictionary(dictionary, main)
+        graphics_count = parse_graphics(graphics, main)
+
+        # TOCFL already supplies explicit simp/trad pairs. Parse it first so
+        # HSK terms can reuse those exact pairings before character-wise fallback.
+        tocfl_entries = parse_tocfl(tocfl_path, forms, main)
+        forms_by_simplified: dict[str, set[str]] = collections.defaultdict(set)
+        for simple, traditional in forms:
+            forms_by_simplified[simple].add(traditional)
+        hsk_entries = parse_hsk(
+            hsk_path, exact_counts, char_map, forms, forms_by_simplified, main
+        )
+        all_entries = hsk_entries + tocfl_entries
+        traditional_aliases = add_traditional_graphics_aliases(main, forms)
+
+        # The main Room asset contains the schema but keeps these metadata tables
+        # empty. A single companion DB supplies the data once on first launch, so
+        # the APK does not contain a second full copy of the vocabulary records.
+        # Fresh installs receive the complete dataset inside the prebuilt Room DB.
+        # Keep an identical companion metadata DB only for in-place upgrades from
+        # older installed databases, which cannot be replaced by createFromAsset.
+        insert_metadata(forms, all_entries, main, metadata)
+        main.commit()
+        metadata.commit()
+
+        print(f"CEDICT form pairs: {len(forms):,}")
+        print(f"MakeMeAHanzi dictionary rows processed: {dictionary_count:,}")
+        print(f"Graphics rows processed: {graphics_count:,}")
+        print(f"HSK 2025-syllabus entries: {len(hsk_entries):,}")
+        print(f"TOCFL entries: {len(tocfl_entries):,}")
+        print(f"Traditional animation aliases with source graphics: {traditional_aliases:,}")
+    finally:
+        main.close()
+        metadata.close()
+
+    validate(main_path, metadata_path)
+
+
+def validate(main_path: Path, metadata_path: Path) -> None:
+    main_counts = check_db(
+        main_path,
+        ROOM_DATABASE_VERSION,
+        {
+            "hanzi_characters", "hanzi_graphics", "practice_lists", "list_items",
+            "hanzi_word_forms", "vocabulary_entries", "study_list_bindings"
+        }
+    )
+    metadata_counts = check_db(
+        metadata_path,
+        METADATA_DATABASE_VERSION,
+        {"hanzi_word_forms", "vocabulary_entries"}
+    )
+    if main_counts["hanzi_characters"] <= 0 or main_counts["hanzi_graphics"] <= 0:
+        raise ValueError("The main Room database has no dictionary or stroke-graphics records")
+    if main_counts["hanzi_word_forms"] <= 0 or main_counts["vocabulary_entries"] <= 0:
+        raise ValueError("The main Room database is missing prebuilt script/vocabulary metadata")
+    if metadata_counts["hanzi_word_forms"] <= 0:
+        raise ValueError("The vocabulary metadata database has no simplified/traditional pairs")
+    if metadata_counts["vocabulary_entries"] <= 0:
+        raise ValueError("The vocabulary metadata database has no HSK/TOCFL entries")
+    print(f"Main DB: {main_path.stat().st_size / (1024 * 1024):.2f} MiB; counts={main_counts}")
+    print(f"Metadata DB: {metadata_path.stat().st_size / 1024:.1f} KiB; counts={metadata_counts}")
+
+
+def main_cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--assets-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--assets-dir", type=Path, default=Path("app/src/main/assets"))
+    parser.add_argument("--output", type=Path, default=Path("app/src/main/assets/hanzi_database_prebuilt.db"))
+    parser.add_argument("--metadata-output", type=Path, default=Path("app/src/main/assets/hanzi_vocabulary_metadata.db"))
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
     try:
         if args.validate_only:
-            characters, graphics, version = validate_database(args.output)
-            print(
-                f"Validated prebuilt DB: {characters:,} characters, "
-                f"{graphics:,} graphics, Room version {version}"
-            )
+            validate(args.output, args.metadata_output)
         else:
-            build_database(args.assets_dir, args.output)
+            build(args.assets_dir, args.output, args.metadata_output)
         return 0
     except Exception as error:
         print(f"ERROR: {error}", file=sys.stderr)
@@ -312,4 +576,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main_cli())

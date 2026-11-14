@@ -1,0 +1,44 @@
+HANZI WRITING — THIRD-PARTY DATA ATTRIBUTION
+
+HSK 3.0 VOCABULARY
+HSK 3.0 word list, all levels by Gushi
+https://gushichinese.com/hsk-3.0/downloads
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+https://creativecommons.org/licenses/by-sa/4.0/
+The source is the official HSK 3.0 examination syllabus published in November 2025.
+The source dataset separates advanced entries into levels 7, 8 and 9 for its own
+learning interface; this app combines those entries into the syllabus's shared
+Level 7–9 advanced band. Changes made for this app: conversion to indexed SQLite,
+merging those three subdivisions into the published shared band, and adding
+Traditional-form mappings from the credited CEDICT/TOCFL sources where available.
+
+TOCFL VOCABULARY
+Vocabulary data from LinZi — https://www.linzi.app/data/
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+https://creativecommons.org/licenses/by-sa/4.0/
+The data is based on the TOCFL 華語八千詞 vocabulary syllabus and includes
+Novice 1, Novice 2, and Levels 1–5.
+
+CC-CEDICT
+CC-CEDICT Chinese-English dictionary data and contributors
+https://www.mdbg.net/chinese/dictionary?page=cc-cedict
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+The dictionary data is converted into the app's SQLite database and may be
+normalized during import.
+
+MAKE ME A HANZI
+Make Me a Hanzi — Shaunak Kishore and contributors
+https://github.com/skishore/makemeahanzi
+The upstream project states that its files have different licenses:
+- dictionary.txt: derived from Unihan and CJKlib; GNU LGPL-3.0-or-later.
+- graphics.txt: derived from Arphic PL KaitiM GB and Arphic PL UKai fonts;
+  Arphic Public License.
+See the upstream COPYING file and license materials:
+https://github.com/skishore/makemeahanzi/blob/master/COPYING
+https://github.com/skishore/makemeahanzi/blob/master/LGPL
+https://github.com/skishore/makemeahanzi/tree/master/APL
+
+The Hanzi Writing build converts these source datasets into SQLite tables for
+offline use. This notice identifies data sources; the upstream license texts
+and terms remain authoritative. Data derived from CC BY-SA datasets remains
+subject to the applicable attribution and ShareAlike requirements.
