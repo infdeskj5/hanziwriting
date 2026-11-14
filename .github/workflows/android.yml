@@ -45,10 +45,21 @@ jobs:
             -o app/src/main/assets/graphics.txt \
             https://raw.githubusercontent.com/skishore/makemeahanzi/master/graphics.txt
 
+      - name: Download HSK and TOCFL curriculum datasets
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 5 --retry-delay 2 \
+            -o app/src/main/assets/hsk-3.0-words-all.json \
+            https://gushichinese.com/hsk-3.0/downloads/hsk-3.0-words-all.json
+          curl --fail --location --retry 5 --retry-delay 2 \
+            -o app/src/main/assets/tocfl-words.json \
+            https://www.linzi.app/data/files/tocfl-words.json
+
       - name: Validate source assets
         run: |
           set -euo pipefail
-          for file in cedict_ts.u8 dictionary.txt graphics.txt; do
+          for file in cedict_ts.u8 dictionary.txt graphics.txt hsk-3.0-words-all.json tocfl-words.json; do
             path="app/src/main/assets/$file"
             test -s "$path" || {
               echo "::error::Required source asset is missing or empty: $path"
@@ -67,22 +78,30 @@ jobs:
         id: hanzi-db-cache
         uses: actions/cache@v4
         with:
-          path: app/src/main/assets/hanzi_database_prebuilt.db
-          key: hanzi-room-db-${{ runner.os }}-${{ hashFiles('app/src/main/assets/cedict_ts.u8', 'app/src/main/assets/dictionary.txt', 'app/src/main/assets/graphics.txt', 'scripts/build_prebuilt_db.py') }}
+          path: |
+            app/src/main/assets/hanzi_database_prebuilt.db
+            app/src/main/assets/hanzi_vocabulary_metadata.db
+          key: hanzi-room-db-v3-${{ runner.os }}-${{ hashFiles('app/src/main/assets/cedict_ts.u8', 'app/src/main/assets/dictionary.txt', 'app/src/main/assets/graphics.txt', 'app/src/main/assets/hsk-3.0-words-all.json', 'app/src/main/assets/tocfl-words.json', 'scripts/build_prebuilt_db.py') }}
 
       - name: Generate prebuilt Room database
         if: steps.hanzi-db-cache.outputs.cache-hit != 'true'
         run: |
           python scripts/build_prebuilt_db.py \
             --assets-dir app/src/main/assets \
-            --output app/src/main/assets/hanzi_database_prebuilt.db
+            --output app/src/main/assets/hanzi_database_prebuilt.db \
+            --metadata-output app/src/main/assets/hanzi_vocabulary_metadata.db
 
       - name: Validate prebuilt database
         run: |
           python scripts/build_prebuilt_db.py \
             --assets-dir app/src/main/assets \
             --output app/src/main/assets/hanzi_database_prebuilt.db \
+            --metadata-output app/src/main/assets/hanzi_vocabulary_metadata.db \
             --validate-only
+
+      - name: Add bundled data attribution notice
+        run: |
+          cp scripts/DATA_ATTRIBUTION.txt app/src/main/assets/DATA_ATTRIBUTION.txt
 
       # These source files are build inputs only. The APK contains the compact
       # prebuilt Room database instead of the raw text/JSON source datasets.
@@ -91,8 +110,11 @@ jobs:
           rm -f \
             app/src/main/assets/cedict_ts.u8 \
             app/src/main/assets/dictionary.txt \
-            app/src/main/assets/graphics.txt
+            app/src/main/assets/graphics.txt \
+            app/src/main/assets/hsk-3.0-words-all.json \
+            app/src/main/assets/tocfl-words.json
           test -s app/src/main/assets/hanzi_database_prebuilt.db
+          test -s app/src/main/assets/hanzi_vocabulary_metadata.db
 
       - name: Set up Java
         uses: actions/setup-java@v4
