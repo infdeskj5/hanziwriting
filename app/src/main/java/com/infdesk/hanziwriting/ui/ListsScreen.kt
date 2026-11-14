@@ -9,8 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,9 +32,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.delay
@@ -47,6 +44,7 @@ private const val LIST_ORDER_KEY = "bottom_to_top_ids"
 @Composable
 fun ListsScreen(
     cachedLists: List<PracticeList>?,
+    listState: LazyListState,
     onListsChanged: (List<PracticeList>) -> Unit,
     onPracticeListClick: (Int) -> Unit,
     onListContentsClick: (Int) -> Unit
@@ -60,13 +58,15 @@ fun ListsScreen(
     val listPreferences = remember {
         context.getSharedPreferences(LIST_ORDER_PREFS, android.content.Context.MODE_PRIVATE)
     }
-    val listState = rememberLazyListState()
 
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
     var isCreating by remember { mutableStateOf(false) }
     var draggingListId by remember { mutableStateOf<Int?>(null) }
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    // Item placement animation is disabled on entry/return to avoid an unwanted
+    // bottom-to-position entrance animation. It is enabled only during reordering.
+    var reorderAnimationsEnabled by remember { mutableStateOf(false) }
     var listPendingDeletion by remember { mutableStateOf<PracticeList?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
 
@@ -188,7 +188,8 @@ fun ListsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .then(
-                                    if (isDragging) Modifier else Modifier.animateItemPlacement(
+                                    if (isDragging || !reorderAnimationsEnabled) Modifier
+                                    else Modifier.animateItemPlacement(
                                         animationSpec = spring(
                                             dampingRatio = Spring.DampingRatioNoBouncy,
                                             stiffness = Spring.StiffnessLow
@@ -197,18 +198,14 @@ fun ListsScreen(
                                 )
                                 .clickable { onListContentsClick(list.listId) }
                                 .graphicsLayer {
-                                    // Keep the dragged card visually lifted and above every
-                                    // neighbour. Pointer movement only updates this graphics
-                                    // layer, not the card's entire composable tree.
+                                    // State is read in the graphics layer lambda, avoiding a full
+                                    // composition on every pointer-move event.
                                     val active = draggingListId == list.listId
                                     translationY = if (active) draggedOffsetY else 0f
-                                    scaleX = if (active) 1.025f else 1f
-                                    scaleY = if (active) 1.025f else 1f
-                                    shadowElevation = if (active) 18.dp.toPx() else 1.dp.toPx()
+                                    scaleX = if (active) 1.018f else 1f
+                                    scaleY = if (active) 1.018f else 1f
+                                    shadowElevation = if (active) 12.dp.toPx() else 1.dp.toPx()
                                 }
-                                // zIndex is essential here: animated neighbours must render
-                                // beneath the lifted card while their slots are changing.
-                                .zIndex(if (isDragging) 10f else 0f)
                                 .then(
                                     if (isDragging) Modifier.border(
                                         width = 1.dp,
@@ -217,7 +214,7 @@ fun ListsScreen(
                                     ) else Modifier
                                 ),
                             shape = MaterialTheme.shapes.large,
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 5.dp else 1.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isDragging) {
                                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
@@ -237,6 +234,7 @@ fun ListsScreen(
                                         .pointerInput(list.listId) {
                                             detectDragGesturesAfterLongPress(
                                                 onDragStart = {
+                                                    reorderAnimationsEnabled = true
                                                     draggedOffsetY = 0f
                                                     draggingListId = list.listId
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -289,6 +287,8 @@ fun ListsScreen(
                                                         ) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
+                                                        delay(260)
+                                                        reorderAnimationsEnabled = false
                                                     }
                                                 },
                                                 onDragCancel = {
@@ -298,6 +298,8 @@ fun ListsScreen(
                                                         release.animateTo(0f, spring()) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
+                                                        delay(260)
+                                                        reorderAnimationsEnabled = false
                                                     }
                                                 }
                                             )
