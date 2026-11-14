@@ -1,4 +1,5 @@
 name: Android Release
+
 on:
   workflow_dispatch:
     inputs:
@@ -31,15 +32,67 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Generate Automatic Tag Name
+      - name: Generate automatic tag name
         run: |
           AUTO_TAG="v$(date -u +'%Y.%m.%d-%H%M%S')"
           echo "TAG_NAME=$AUTO_TAG" >> "$GITHUB_ENV"
 
-      - name: Download graphics.txt
+      - name: Download MakeMeAHanzi graphics
         run: |
+          set -euo pipefail
           mkdir -p app/src/main/assets
-          curl -L -o app/src/main/assets/graphics.txt https://raw.githubusercontent.com/skishore/makemeahanzi/master/graphics.txt
+          curl --fail --location --retry 5 --retry-delay 2 \
+            -o app/src/main/assets/graphics.txt \
+            https://raw.githubusercontent.com/skishore/makemeahanzi/master/graphics.txt
+
+      - name: Validate source assets
+        run: |
+          set -euo pipefail
+          for file in cedict_ts.u8 dictionary.txt graphics.txt; do
+            path="app/src/main/assets/$file"
+            test -s "$path" || {
+              echo "::error::Required source asset is missing or empty: $path"
+              exit 1
+            }
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The prebuilt database is cached by the content hashes of all source files
+      # and the generator script. It is regenerated only if an input changes.
+      - name: Restore prebuilt Room database cache
+        id: hanzi-db-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/hanzi_database_prebuilt.db
+          key: hanzi-room-db-${{ runner.os }}-${{ hashFiles('app/src/main/assets/cedict_ts.u8', 'app/src/main/assets/dictionary.txt', 'app/src/main/assets/graphics.txt', 'scripts/build_prebuilt_db.py') }}
+
+      - name: Generate prebuilt Room database
+        if: steps.hanzi-db-cache.outputs.cache-hit != 'true'
+        run: |
+          python scripts/build_prebuilt_db.py \
+            --assets-dir app/src/main/assets \
+            --output app/src/main/assets/hanzi_database_prebuilt.db
+
+      - name: Validate prebuilt database
+        run: |
+          python scripts/build_prebuilt_db.py \
+            --assets-dir app/src/main/assets \
+            --output app/src/main/assets/hanzi_database_prebuilt.db \
+            --validate-only
+
+      # These source files are build inputs only. The APK contains the compact
+      # prebuilt Room database instead of the raw text/JSON source datasets.
+      - name: Remove raw source assets from APK packaging
+        run: |
+          rm -f \
+            app/src/main/assets/cedict_ts.u8 \
+            app/src/main/assets/dictionary.txt \
+            app/src/main/assets/graphics.txt
+          test -s app/src/main/assets/hanzi_database_prebuilt.db
 
       - name: Set up Java
         uses: actions/setup-java@v4
