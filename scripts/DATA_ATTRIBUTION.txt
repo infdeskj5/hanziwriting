@@ -12,12 +12,23 @@ Level 7–9 advanced band. Changes made for this app: conversion to indexed SQLi
 merging those three subdivisions into the published shared band, and adding
 Traditional-form mappings from the credited CEDICT/TOCFL sources where available.
 
-TOCFL VOCABULARY
+TOCFL VOCABULARY — PREFERRED SOURCE
 Vocabulary data from LinZi — https://www.linzi.app/data/
 License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
 https://creativecommons.org/licenses/by-sa/4.0/
 The data is based on the TOCFL 華語八千詞 vocabulary syllabus and includes
-Novice 1, Novice 2, and Levels 1–5.
+Novice 1, Novice 2, and Levels 1–5. This is the preferred download source.
+
+TOCFL VOCABULARY — AUTOMATIC FALLBACK
+Ivan Kra, TOCFL wordlists — https://github.com/ivankra/tocfl
+Fallback file: https://raw.githubusercontent.com/ivankra/tocfl/master/tocfl-202307.csv
+The repository README identifies this as the cleaned 2022/2023 TOCFL wordlist,
+parsed from the official Taiwan MOE/SC-TOP source files. It provides seven level
+bands, Traditional/Simplified forms, pinyin, part-of-speech labels, and a JSON
+Variants column. The repository does not provide a standalone LICENSE file;
+review its current upstream terms before redistributing a build using this
+fallback. Definitions are filled from the separately attributed CC-CEDICT data
+when matching dictionary entries exist.
 
 CC-CEDICT
 CC-CEDICT Chinese-English dictionary data and contributors
