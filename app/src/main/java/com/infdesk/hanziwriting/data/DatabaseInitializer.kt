@@ -79,7 +79,7 @@ object DatabaseInitializer {
                     AppState.initProgress = 0.82f
                     importVocabularyMetadata(context, sqlite)
                 } else {
-                    DebugLog.w("DBInit", "Vocabulary metadata is missing; rebuild the app with the curriculum datasets")
+                    DebugLog.d("DBInit", "Vocabulary metadata is missing; rebuild the app with the curriculum datasets")
                 }
 
                 prefs.edit().putInt(KEY_INIT_VERSION, CURRENT_INIT_VERSION).apply()
