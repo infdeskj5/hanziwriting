@@ -14,8 +14,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalContext
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
@@ -172,28 +174,40 @@ fun HanziWritingApp() {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (displayState == "Search" || displayState == "Lists" || displayState == "Settings") {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    tonalElevation = 0.dp
-                ) {
-                    Screen.entries.forEach { screen ->
-                        NavigationBarItem(
-                            icon = { Icon(screen.icon, contentDescription = screen.title) },
-                            label = { Text(screen.title) },
-                            selected = currentScreen == screen,
-                            onClick = {
-                                currentScreen = screen
-                                wordBackStack = emptyList()
-                                practiceCharacter = null
-                                practiceListId = null
-                                listContentsId = null
-                                selectedListItems = emptySet()
-                                customPracticeItems = null
-                            }
-                        )
-                    }
+            // Keep the Scaffold bottom-bar slot at a constant measured height.
+            // Child screens hide the navigation bar visually, but do not remove it:
+            // this prevents the Lists content from shifting when opening/closing
+            // List Contents.
+            val showBottomNavigation =
+                displayState == "Search" || displayState == "Lists" || displayState == "Settings"
+
+            NavigationBar(
+                modifier = Modifier
+                    .alpha(if (showBottomNavigation) 1f else 0f)
+                    .then(
+                        if (showBottomNavigation) Modifier
+                        else Modifier.clearAndSetSemantics { }
+                    ),
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = 0.dp
+            ) {
+                Screen.entries.forEach { screen ->
+                    NavigationBarItem(
+                        icon = { Icon(screen.icon, contentDescription = screen.title) },
+                        label = { Text(screen.title) },
+                        selected = currentScreen == screen,
+                        enabled = showBottomNavigation,
+                        onClick = {
+                            currentScreen = screen
+                            wordBackStack = emptyList()
+                            practiceCharacter = null
+                            practiceListId = null
+                            listContentsId = null
+                            selectedListItems = emptySet()
+                            customPracticeItems = null
+                        }
+                    )
                 }
             }
         }
