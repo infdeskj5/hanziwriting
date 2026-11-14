@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import csv
 import json
 import re
 import sqlite3
@@ -343,55 +344,144 @@ def parse_hsk(
     return entries
 
 
+def _tocfl_level_from_row(row: dict[str, Any], row_number: int) -> str:
+    """Accept the LinZi numeric bands and Ivan Kra's L0/L1-L5 source IDs."""
+    raw_level = row.get("tocfl_level", row.get("level", row.get("TOCFL Level")))
+    try:
+        number = float(raw_level)
+    except (TypeError, ValueError):
+        band = clean_text(row.get("tocfl_band") or row.get("level_label")).lower()
+        mapping = {
+            "novice 1": "N1", "novice 2": "N2",
+            "level 1": "1", "level 2": "2", "level 3": "3",
+            "level 4": "4", "level 5": "5"
+        }
+        if band in mapping:
+            return mapping[band]
+
+        source_id = clean_text(row.get("ID") or row.get("id"))
+        match = re.match(r"^L0-([12])\d+", source_id, flags=re.IGNORECASE)
+        if match:
+            return "N1" if match.group(1) == "1" else "N2"
+        match = re.match(r"^L([1-5])-\d+", source_id, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+        raise ValueError(f"TOCFL dataset row {row_number}: unexpected level {raw_level!r} / ID {source_id!r}")
+
+    if abs(number - 0.1) < 0.00001:
+        return "N1"
+    if abs(number - 0.2) < 0.00001:
+        return "N2"
+    if number.is_integer() and 1 <= int(number) <= 5:
+        return str(int(number))
+    raise ValueError(f"TOCFL dataset row {row_number}: unexpected level {raw_level!r}")
+
+
+def _parse_tocfl_csv(path: Path) -> list[dict[str, Any]]:
+    """Normalize the 2023 TOCFL CSV, including its explicit Variants JSON field."""
+    records: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"ID", "Traditional", "Simplified", "Pinyin"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"TOCFL CSV is missing columns: {sorted(missing)}")
+        for row_number, row in enumerate(reader, start=2):
+            raw_variants = clean_text(row.get("Variants"))
+            variants: list[dict[str, Any]] = []
+            if raw_variants:
+                try:
+                    decoded = json.loads(raw_variants)
+                    if isinstance(decoded, list):
+                        variants = [item for item in decoded if isinstance(item, dict)]
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"TOCFL CSV row {row_number}: invalid Variants JSON") from error
+
+            if not variants:
+                variants = [{
+                    "Traditional": row.get("Traditional", ""),
+                    "Simplified": row.get("Simplified", ""),
+                    "Pinyin": row.get("Pinyin", "")
+                }]
+
+            base_id = clean_text(row.get("ID")) or f"tocfl-{row_number:05d}"
+            level_row = {"ID": base_id}
+            level = _tocfl_level_from_row(level_row, row_number)
+            pos = clean_text(row.get("POS"))
+            meaning = clean_text(row.get("Meaning") or row.get("Definitions"))
+            for variant_index, variant in enumerate(variants):
+                traditional = clean_text(variant.get("Traditional") or row.get("Traditional"))
+                simplified = clean_text(variant.get("Simplified") or row.get("Simplified"))
+                if not simplified and not traditional:
+                    continue
+                if not simplified:
+                    simplified = traditional
+                if not traditional:
+                    traditional = simplified
+                pinyin = clean_text(variant.get("Pinyin") or row.get("Pinyin"))
+                records.append({
+                    "id": f"{base_id}:v{variant_index + 1}",
+                    "level": level,
+                    "simplified": simplified,
+                    "traditional": traditional,
+                    "pinyin": pinyin,
+                    "pos": pos,
+                    "meaning": meaning
+                })
+    return records
+
+
 def parse_tocfl(path: Path, forms: set[tuple[str, str]], main: sqlite3.Connection) -> list[tuple[Any, ...]]:
-    payload = read_json(path)
-    records = json_records(payload, "TOCFL dataset")
+    if path.suffix.lower() == ".csv":
+        records = _parse_tocfl_csv(path)
+        normalized_rows = records
+        csv_input = True
+    else:
+        payload = read_json(path)
+        source_rows = json_records(payload, "TOCFL dataset")
+        normalized_rows = []
+        for row_number, row in enumerate(source_rows, start=1):
+            level = _tocfl_level_from_row(row, row_number)
+            simplified = clean_text(row.get("simp") or row.get("simplified") or row.get("Simplified"))
+            traditional = clean_text(row.get("trad") or row.get("traditional") or row.get("Traditional"))
+            if not simplified and not traditional:
+                continue
+            normalized_rows.append({
+                "id": clean_text(row.get("id") or row.get("ID")) or f"tocfl-{row_number:05d}",
+                "level": level,
+                "simplified": simplified or traditional,
+                "traditional": traditional or simplified,
+                "pinyin": clean_text(row.get("pinyin") or row.get("Pinyin")),
+                "pos": clean_text(row.get("pos") or row.get("POS")),
+                "meaning": clean_text(row.get("definitions") or row.get("definition"))
+            })
+        csv_input = False
+
     entries: list[tuple[Any, ...]] = []
-    for index, row in enumerate(records):
-        simplified = clean_text(row.get("simp") or row.get("simplified") or row.get("Simplified"))
-        traditional = clean_text(row.get("trad") or row.get("traditional") or row.get("Traditional"))
+    for index, row in enumerate(normalized_rows):
+        simplified = clean_text(row.get("simplified"))
+        traditional = clean_text(row.get("traditional"))
         if not simplified and not traditional:
             continue
-        if not simplified:
-            simplified = traditional
-        if not traditional:
-            traditional = simplified
-
-        raw_level = row.get("tocfl_level", row.get("level", row.get("TOCFL Level")))
-        try:
-            number = float(raw_level)
-        except (TypeError, ValueError):
-            band = clean_text(row.get("tocfl_band") or row.get("level_label")).lower()
-            mapping = {
-                "novice 1": "N1", "novice 2": "N2",
-                "level 1": "1", "level 2": "2", "level 3": "3",
-                "level 4": "4", "level 5": "5"
-            }
-            level = mapping.get(band)
-            if level is None:
-                raise ValueError(f"TOCFL dataset row {index + 1}: unexpected level {raw_level!r}")
-        else:
-            if abs(number - 0.1) < 0.00001:
-                level = "N1"
-            elif abs(number - 0.2) < 0.00001:
-                level = "N2"
-            elif number.is_integer() and 1 <= int(number) <= 5:
-                level = str(int(number))
-            else:
-                raise ValueError(f"TOCFL dataset row {index + 1}: unexpected level {raw_level!r}")
-
+        simplified = simplified or traditional
+        traditional = traditional or simplified
         add_form(forms, simplified, traditional)
-        pinyin = clean_text(row.get("pinyin") or row.get("Pinyin"))
-        definitions = clean_text(row.get("definitions") or row.get("definition"))
+        pinyin = clean_text(row.get("pinyin"))
+        definitions = clean_text(row.get("meaning"))
         upsert_vocabulary_character(main, simplified, pinyin, definitions)
-        pos = clean_text(row.get("pos") or row.get("POS"))
-        stable_id = clean_text(row.get("id") or row.get("ID")) or f"tocfl-{index + 1:05d}"
+        stable_id = clean_text(row.get("id")) or f"tocfl-{index + 1:05d}"
         entries.append((
-            "TOCFL", stable_id, level, simplified, traditional,
-            traditional, pinyin, pos, index
+            "TOCFL", stable_id, clean_text(row.get("level")), simplified,
+            traditional, traditional, pinyin, clean_text(row.get("pos")), index
         ))
+
     if not entries:
         raise ValueError("TOCFL dataset contains no usable vocabulary entries")
+    if csv_input:
+        levels = {row[2] for row in entries}
+        expected = {"N1", "N2", "1", "2", "3", "4", "5"}
+        if not expected.issubset(levels):
+            raise ValueError(f"TOCFL CSV is missing one or more of the seven level bands: {sorted(levels)}")
     return entries
 
 
@@ -477,7 +567,16 @@ def build(assets: Path, main_path: Path, metadata_path: Path) -> None:
     dictionary = require_file(assets, "dictionary.txt")
     graphics = require_file(assets, "graphics.txt")
     hsk_path = require_file(assets, "hsk-3.0-words-all.json")
-    tocfl_path = require_file(assets, "tocfl-words.json")
+    tocfl_json = assets / "tocfl-words.json"
+    tocfl_csv = assets / "tocfl-202307.csv"
+    if tocfl_json.is_file() and tocfl_json.stat().st_size > 0:
+        tocfl_path = tocfl_json
+    elif tocfl_csv.is_file() and tocfl_csv.stat().st_size > 0:
+        tocfl_path = tocfl_csv
+    else:
+        raise FileNotFoundError(
+            f"Missing TOCFL source: expected {tocfl_json} or {tocfl_csv}"
+        )
 
     main = create_database(main_path, MAIN_SCHEMA, ROOM_DATABASE_VERSION)
     metadata = create_database(metadata_path, METADATA_SCHEMA, METADATA_DATABASE_VERSION)
@@ -507,9 +606,6 @@ def build(assets: Path, main_path: Path, metadata_path: Path) -> None:
         all_entries = hsk_entries + tocfl_entries
         traditional_aliases = add_traditional_graphics_aliases(main, forms)
 
-        # The main Room asset contains the schema but keeps these metadata tables
-        # empty. A single companion DB supplies the data once on first launch, so
-        # the APK does not contain a second full copy of the vocabulary records.
         # Fresh installs receive the complete dataset inside the prebuilt Room DB.
         # Keep an identical companion metadata DB only for in-place upgrades from
         # older installed databases, which cannot be replaced by createFromAsset.
