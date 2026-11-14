@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.FileDownload
@@ -207,7 +209,10 @@ fun SettingsScreen() {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 18.dp)
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineLarge)
         Text(
@@ -223,7 +228,7 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.outline
         )
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(12.dp))
 
         statusMessage?.let {
             Text(
@@ -236,6 +241,16 @@ fun SettingsScreen() {
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
             )
         }
+
+        VocabularyListsSetting(dao = dao)
+        Text(
+            "HSK 3.0 data by Gushi · TOCFL data by LinZi · CC BY-SA 4.0",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.fillMaxWidth().padding(top = 5.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         PracticeSettingCard(
             title = "Use original Hanzi strokes",
