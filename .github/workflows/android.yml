@@ -48,24 +48,47 @@ jobs:
       - name: Download HSK and TOCFL curriculum datasets
         run: |
           set -euo pipefail
-          mkdir -p app/src/main/assets
+          ASSETS="app/src/main/assets"
+          mkdir -p "$ASSETS"
           curl --fail --location --retry 5 --retry-delay 2 \
-            -o app/src/main/assets/hsk-3.0-words-all.json \
+            -o "$ASSETS/hsk-3.0-words-all.json" \
             https://gushichinese.com/hsk-3.0/downloads/hsk-3.0-words-all.json
-          curl --fail --location --retry 5 --retry-delay 2 \
-            -o app/src/main/assets/tocfl-words.json \
-            https://www.linzi.app/data/files/tocfl-words.json
+
+          # Prefer LinZi's newer, CC BY-SA 4.0 export. Some automated runners
+          # receive HTTP 403 from linzi.app; in that case use the public GitHub
+          # mirror of the 2022/2023 official TOCFL list supplied by the user.
+          if curl --fail --location --retry 2 --retry-delay 2 \
+              --user-agent "Mozilla/5.0 (compatible; HanziWritingBuild/1.0)" \
+              --referer "https://www.linzi.app/data/" \
+              -o "$ASSETS/tocfl-words.json" \
+              https://www.linzi.app/data/files/tocfl-words.json \
+              && python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); rows=d.get("data",[]) if isinstance(d,dict) else d; assert len(rows)>=7000, "TOCFL JSON is incomplete"' "$ASSETS/tocfl-words.json"; then
+            echo "Using LinZi TOCFL dataset."
+          else
+            rm -f "$ASSETS/tocfl-words.json"
+            echo "::warning::LinZi download was blocked or failed validation; falling back to the GitHub-hosted TOCFL 2023 CSV."
+            curl --fail --location --retry 5 --retry-delay 2 \
+              -o "$ASSETS/tocfl-202307.csv" \
+              https://raw.githubusercontent.com/ivankra/tocfl/master/tocfl-202307.csv
+            test "$(wc -l < "$ASSETS/tocfl-202307.csv")" -ge 7000
+            head -n 1 "$ASSETS/tocfl-202307.csv" | grep -q '^ID,Traditional,Simplified,Pinyin,POS,Variants$'
+          fi
 
       - name: Validate source assets
         run: |
           set -euo pipefail
-          for file in cedict_ts.u8 dictionary.txt graphics.txt hsk-3.0-words-all.json tocfl-words.json; do
+          for file in cedict_ts.u8 dictionary.txt graphics.txt hsk-3.0-words-all.json; do
             path="app/src/main/assets/$file"
             test -s "$path" || {
               echo "::error::Required source asset is missing or empty: $path"
               exit 1
             }
           done
+          if [ ! -s app/src/main/assets/tocfl-words.json ] && \
+             [ ! -s app/src/main/assets/tocfl-202307.csv ]; then
+            echo "::error::Neither the LinZi TOCFL JSON nor the GitHub TOCFL CSV was downloaded."
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -81,7 +104,7 @@ jobs:
           path: |
             app/src/main/assets/hanzi_database_prebuilt.db
             app/src/main/assets/hanzi_vocabulary_metadata.db
-          key: hanzi-room-db-v3-${{ runner.os }}-${{ hashFiles('app/src/main/assets/cedict_ts.u8', 'app/src/main/assets/dictionary.txt', 'app/src/main/assets/graphics.txt', 'app/src/main/assets/hsk-3.0-words-all.json', 'app/src/main/assets/tocfl-words.json', 'scripts/build_prebuilt_db.py') }}
+          key: hanzi-room-db-v3-${{ runner.os }}-${{ hashFiles('app/src/main/assets/cedict_ts.u8', 'app/src/main/assets/dictionary.txt', 'app/src/main/assets/graphics.txt', 'app/src/main/assets/hsk-3.0-words-all.json', 'app/src/main/assets/tocfl-words.json', 'app/src/main/assets/tocfl-202307.csv', 'scripts/build_prebuilt_db.py') }}
 
       - name: Generate prebuilt Room database
         if: steps.hanzi-db-cache.outputs.cache-hit != 'true'
@@ -112,7 +135,8 @@ jobs:
             app/src/main/assets/dictionary.txt \
             app/src/main/assets/graphics.txt \
             app/src/main/assets/hsk-3.0-words-all.json \
-            app/src/main/assets/tocfl-words.json
+            app/src/main/assets/tocfl-words.json \
+            app/src/main/assets/tocfl-202307.csv
           test -s app/src/main/assets/hanzi_database_prebuilt.db
           test -s app/src/main/assets/hanzi_vocabulary_metadata.db
 
