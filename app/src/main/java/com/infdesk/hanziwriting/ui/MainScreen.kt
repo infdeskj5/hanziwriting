@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.PracticeList
@@ -212,11 +213,30 @@ fun HanziWritingApp() {
             }
         }
     ) { paddingValues ->
+        // The bottom bar keeps a constant measured height on every route so Lists
+        // never shifts when navigating to/from List Contents. Its content inset is
+        // applied only to the three top-level tabs; child pages use the full height.
+        val mainTabContent = displayState == "Search" ||
+            displayState == "Lists" || displayState == "Settings"
+        val layoutDirection = LocalLayoutDirection.current
+        val contentPadding = PaddingValues(
+            start = paddingValues.calculateStartPadding(layoutDirection),
+            top = paddingValues.calculateTopPadding(),
+            end = paddingValues.calculateEndPadding(layoutDirection),
+            bottom = if (mainTabContent) {
+                paddingValues.calculateBottomPadding()
+            } else {
+                // The app NavigationBar is invisible on child pages, but the
+                // Android system navigation area must still remain unobstructed.
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            }
+        )
+
         // Deliberately switch pages directly instead of Crossfade. Crossfade keeps
         // both pages composed for its duration; WordPage contains looping stroke
         // animations, so that doubles rendering work during navigation and caused
         // avoidable frame drops on mid-range devices.
-        Box(Modifier.fillMaxSize().padding(paddingValues)) {
+        Box(Modifier.fillMaxSize().padding(contentPadding)) {
             when (displayState) {
                 "Search" -> SearchScreen(
                     searchQuery = searchQuery,
