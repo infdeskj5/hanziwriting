@@ -55,6 +55,10 @@ interface HanziDao {
     @Query("SELECT character FROM list_items WHERE listId = :listId")
     suspend fun getCharactersInList(listId: Int): List<String>
 
+    // Used by AddToListDialog to show which practice lists already contain an item.
+    @Query("SELECT listId FROM list_items WHERE character = :character ORDER BY listId")
+    suspend fun getListIdsContainingCharacter(character: String): List<Int>
+
     @Query("DELETE FROM list_items WHERE listId = :listId")
     suspend fun deleteListItems(listId: Int)
 
