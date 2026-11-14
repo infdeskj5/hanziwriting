@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.zIndex
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.delay
@@ -66,9 +67,6 @@ fun ListsScreen(
     var isCreating by remember { mutableStateOf(false) }
     var draggingListId by remember { mutableStateOf<Int?>(null) }
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
-    // Item placement animation is disabled on entry/return to avoid an unwanted
-    // bottom-to-position entrance animation. It is enabled only during reordering.
-    var reorderAnimationsEnabled by remember { mutableStateOf(false) }
     var listPendingDeletion by remember { mutableStateOf<PracticeList?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
 
@@ -190,8 +188,7 @@ fun ListsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .then(
-                                    if (isDragging || !reorderAnimationsEnabled) Modifier
-                                    else Modifier.animateItemPlacement(
+                                    if (isDragging) Modifier else Modifier.animateItemPlacement(
                                         animationSpec = spring(
                                             dampingRatio = Spring.DampingRatioNoBouncy,
                                             stiffness = Spring.StiffnessLow
@@ -200,14 +197,16 @@ fun ListsScreen(
                                 )
                                 .clickable { onListContentsClick(list.listId) }
                                 .graphicsLayer {
-                                    // State is read in the graphics layer lambda, avoiding a full
-                                    // composition on every pointer-move event.
+                                    // Keep the dragged card visually lifted while pointer
+                                    // movement updates only this graphics layer.
                                     val active = draggingListId == list.listId
                                     translationY = if (active) draggedOffsetY else 0f
-                                    scaleX = if (active) 1.018f else 1f
-                                    scaleY = if (active) 1.018f else 1f
-                                    shadowElevation = if (active) 12.dp.toPx() else 1.dp.toPx()
+                                    scaleX = if (active) 1.025f else 1f
+                                    scaleY = if (active) 1.025f else 1f
+                                    shadowElevation = if (active) 18.dp.toPx() else 1.dp.toPx()
                                 }
+                                // Keep the lifted card above its animated neighbours.
+                                .zIndex(if (isDragging) 10f else 0f)
                                 .then(
                                     if (isDragging) Modifier.border(
                                         width = 1.dp,
@@ -216,7 +215,7 @@ fun ListsScreen(
                                     ) else Modifier
                                 ),
                             shape = MaterialTheme.shapes.large,
-                            elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 5.dp else 1.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isDragging) {
                                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
@@ -236,7 +235,6 @@ fun ListsScreen(
                                         .pointerInput(list.listId) {
                                             detectDragGesturesAfterLongPress(
                                                 onDragStart = {
-                                                    reorderAnimationsEnabled = true
                                                     draggedOffsetY = 0f
                                                     draggingListId = list.listId
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -289,8 +287,6 @@ fun ListsScreen(
                                                         ) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
-                                                        delay(260)
-                                                        reorderAnimationsEnabled = false
                                                     }
                                                 },
                                                 onDragCancel = {
@@ -300,8 +296,6 @@ fun ListsScreen(
                                                         release.animateTo(0f, spring()) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
-                                                        delay(260)
-                                                        reorderAnimationsEnabled = false
                                                     }
                                                 }
                                             )
