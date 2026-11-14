@@ -49,6 +49,8 @@ fun SearchScreen(
     val blankAreaInteraction = remember { MutableInteractionSource() }
 
     var itemToAdd by remember { mutableStateOf<String?>(null) }
+    var displayWords by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var hskLevelsByWord by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
 
     // Keep the completed-query marker in MainScreen, not here. SearchScreen is
     // temporarily removed when Word Details opens; lifted state prevents a refetch.
@@ -66,12 +68,20 @@ fun SearchScreen(
         if (searchQuery.isBlank()) {
             onResultsChange(emptyList())
             onSearchCompleted("")
+            displayWords = emptyMap()
+            hskLevelsByWord = emptyMap()
             return@LaunchedEffect
         }
 
-        // A completed query remains cached when the user opens Word Details and
-        // returns. Only a genuinely new query triggers another database lookup.
-        if (completedSearchQuery == searchQuery) return@LaunchedEffect
+        // The result rows are lifted to MainScreen and survive Word Details, but
+        // this composable's display mapping is recreated on return. Restore only
+        // the compact Traditional -> Simplified mapping without rerunning search.
+        if (completedSearchQuery == searchQuery) {
+            displayWords = dao.getSimplifiedForms(searchQuery)
+                .filter { it != searchQuery }
+                .associateWith { searchQuery }
+            return@LaunchedEffect
+        }
 
         // Keep the previous completed result set in memory while this query is
         // pending. The Searching state hides it; retaining it allows an immediate
@@ -79,25 +89,50 @@ fun SearchScreen(
         delay(250)
         val queryBeingLoaded = searchQuery
         try {
-            val exactMatches = dao.searchHanziExact(queryBeingLoaded)
-            val composingMatches = if (queryBeingLoaded.length > 1 && exactMatches.isNotEmpty()) {
-                queryBeingLoaded.toCharArray().distinct().map { it.toString() }
-                    .flatMap { dao.searchHanziExact(it) }
-            } else {
-                emptyList()
-            }
+            // Search both scripts. CC-CEDICT is stored by Simplified form, so a
+            // Traditional query is first mapped to its Simplified equivalent(s).
+            val convertedSimplifiedForms = dao.getSimplifiedForms(queryBeingLoaded)
+                .filter { it != queryBeingLoaded }
+            val queryForms = (listOf(queryBeingLoaded) + convertedSimplifiedForms).distinct()
+            val exactMatches = queryForms.flatMap { dao.searchHanziExact(it) }
+            val composingMatches = queryForms
+                .filter { it.length > 1 }
+                .flatMap { form ->
+                    form.toCharArray().distinct().flatMap { dao.searchHanziExact(it.toString()) }
+                }
 
             val results = (exactMatches + composingMatches)
                 .distinctBy { it.character }
-                .sortedBy { it.character != queryBeingLoaded }
+                .sortedBy { it.character != queryBeingLoaded && it.character !in convertedSimplifiedForms }
 
+            displayWords = convertedSimplifiedForms.associateWith { queryBeingLoaded }
             onResultsChange(results)
             onSearchCompleted(queryBeingLoaded)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            displayWords = emptyMap()
             onResultsChange(emptyList())
             onSearchCompleted(queryBeingLoaded)
+        }
+    }
+
+    LaunchedEffect(searchResults) {
+        if (searchResults.isEmpty()) {
+            hskLevelsByWord = emptyMap()
+        } else {
+            runCatching {
+                dao.getHskLevelsForWords(searchResults.map { it.character }.distinct())
+            }.onSuccess { tags ->
+                val levelsByForm = mutableMapOf<String, MutableSet<String>>()
+                tags.forEach { tag ->
+                    levelsByForm.getOrPut(tag.simplified) { mutableSetOf() }.add(tag.level)
+                    if (tag.traditional.isNotBlank()) {
+                        levelsByForm.getOrPut(tag.traditional) { mutableSetOf() }.add(tag.level)
+                    }
+                }
+                hskLevelsByWord = levelsByForm.mapValues { (_, levels) -> levels.toList() }
+            }
         }
     }
 
@@ -184,10 +219,13 @@ fun SearchScreen(
                         )
                     ) {
                         items(visualResults, key = { it.character }) { character ->
+                            val displayWord = displayWords[character.character] ?: character.character
                             HanziResultItem(
                                 character = character,
-                                onWordClick = { onWordClick(character.character) },
-                                onAddToListClick = { itemToAdd = character.character }
+                                displayWord = displayWord,
+                                hskLevels = hskLevelsByWord[character.character].orEmpty(),
+                                onWordClick = { onWordClick(displayWord) },
+                                onAddToListClick = { itemToAdd = displayWord }
                             )
                         }
                     }
@@ -231,7 +269,9 @@ fun SearchScreen(
 fun HanziResultItem(
     character: HanziCharacter,
     onWordClick: () -> Unit,
-    onAddToListClick: () -> Unit
+    onAddToListClick: () -> Unit,
+    displayWord: String = character.character,
+    hskLevels: List<String> = emptyList()
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onWordClick() },
@@ -242,7 +282,7 @@ fun HanziResultItem(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = character.character,
+                    text = displayWord,
                     style = MaterialTheme.typography.headlineLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(end = 16.dp)
@@ -252,6 +292,7 @@ fun HanziResultItem(
                         text = PinyinUtils.convertToToneMarks(character.pinyin),
                         style = MaterialTheme.typography.titleMedium
                     )
+                    HskLevelChips(hskLevels, modifier = Modifier.padding(top = 6.dp))
                     Text(
                         text = character.definition,
                         style = MaterialTheme.typography.bodyMedium,
