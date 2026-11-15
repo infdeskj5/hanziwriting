@@ -30,6 +30,10 @@ import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
+private fun isCjkSearchCharacter(char: Char): Boolean =
+    char in '\u3400'..'\u4DBF' || char in '\u4E00'..'\u9FFF' ||
+        char in '\uF900'..'\uFAFF'
+
 @Composable
 fun SearchScreen(
     searchQuery: String,
@@ -73,47 +77,80 @@ fun SearchScreen(
             return@LaunchedEffect
         }
 
-        // The result rows are lifted to MainScreen and survive Word Details, but
-        // this composable's display mapping is recreated on return. Restore only
-        // the compact Traditional -> Simplified mapping without rerunning search.
+        // Search results are lifted to MainScreen and survive opening Word Details.
+        // Recreate only the light script-display mapping when returning.
         if (completedSearchQuery == searchQuery) {
-            displayWords = dao.getSimplifiedForms(searchQuery)
+            val restoredForms = try {
+                dao.getSimplifiedForms(searchQuery)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            displayWords = restoredForms
                 .filter { it != searchQuery }
                 .associateWith { searchQuery }
             return@LaunchedEffect
         }
 
-        // Keep the previous completed result set in memory while this query is
-        // pending. The Searching state hides it; retaining it allows an immediate
-        // return to the previously completed query without another database read.
-        delay(250)
-        val queryBeingLoaded = searchQuery
+        // Reset to the first item. With reverseLayout=true, index 0 is displayed
+        // at the bottom edge, which is the intended thumb-reachable starting point.
+        resultsListState.scrollToItem(0)
+        delay(180)
+        val completedKey = searchQuery
+        val query = searchQuery.trim()
+
         try {
-            // Search both scripts. CC-CEDICT is stored by Simplified form, so a
-            // Traditional query is first mapped to its Simplified equivalent(s).
-            val convertedSimplifiedForms = dao.getSimplifiedForms(queryBeingLoaded)
-                .filter { it != queryBeingLoaded }
-            val queryForms = (listOf(queryBeingLoaded) + convertedSimplifiedForms).distinct()
-            val exactMatches = queryForms.flatMap { dao.searchHanziExact(it) }
-            val composingMatches = queryForms
-                .filter { it.length > 1 }
+            // Traditional -> Simplified conversion is optional: failure/missing
+            // metadata must never prevent the ordinary Hanzi dictionary search.
+            val convertedSimplifiedForms = try {
+                dao.getSimplifiedForms(query).filter { it != query }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            val queryForms = (listOf(query) + convertedSimplifiedForms).distinct()
+            val directMatches = queryForms.flatMap { form ->
+                dao.searchHanziForSearch(form)
+            }
+
+            // Only expand a multi-character Hanzi query into component-character
+            // lookups. Pinyin and English text must be searched as complete phrases.
+            val componentMatches = queryForms
+                .filter { form -> form.length > 1 && form.all(::isCjkSearchCharacter) }
                 .flatMap { form ->
-                    form.toCharArray().distinct().flatMap { dao.searchHanziExact(it.toString()) }
+                    form.toCharArray().distinct().flatMap { char ->
+                        dao.searchHanziForSearch(char.toString())
+                    }
                 }
 
-            val results = (exactMatches + composingMatches)
+            val results = (directMatches + componentMatches)
                 .distinctBy { it.character }
-                .sortedBy { it.character != queryBeingLoaded && it.character !in convertedSimplifiedForms }
+                .sortedBy { it.character !in queryForms }
 
-            displayWords = convertedSimplifiedForms.associateWith { queryBeingLoaded }
+            displayWords = convertedSimplifiedForms.associateWith { query }
             onResultsChange(results)
-            onSearchCompleted(queryBeingLoaded)
+            onSearchCompleted(completedKey)
+            resultsListState.scrollToItem(0)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            // Keep a compatibility fallback for databases/app builds that still
+            // contain the older DAO query but not the new substring query.
+            val fallback = try {
+                dao.searchHanziExact(query)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            android.util.Log.e("HanziSearch", "Search failed for query: $query", error)
             displayWords = emptyMap()
-            onResultsChange(emptyList())
-            onSearchCompleted(queryBeingLoaded)
+            onResultsChange(fallback)
+            onSearchCompleted(completedKey)
+            resultsListState.scrollToItem(0)
         }
     }
 
@@ -136,10 +173,9 @@ fun SearchScreen(
         }
     }
 
-    // This is the same bottom-first presentation used by the working List Contents
-    // screen: reverse the visual copy and bottom-align a short result set. In
-    // particular, a single-character result is anchored at the bottom, not the top.
-    val visualResults = remember(searchResults) { searchResults.asReversed() }
+    // reverseLayout keeps the highest-priority result (index zero) anchored at
+    // the bottom edge for both short and long result sets.
+    val visualResults = searchResults
 
     Column(
         modifier = Modifier
@@ -212,11 +248,9 @@ fun SearchScreen(
                     LazyColumn(
                         state = resultsListState,
                         modifier = Modifier.fillMaxSize(),
+                        reverseLayout = true,
                         contentPadding = PaddingValues(vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(
-                            10.dp,
-                            alignment = Alignment.Bottom
-                        )
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(visualResults, key = { it.character }) { character ->
                             val displayWord = displayWords[character.character] ?: character.character
