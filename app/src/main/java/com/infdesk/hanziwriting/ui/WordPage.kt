@@ -27,6 +27,8 @@ import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.PinyinUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private data class StrokeAnimationData(
     val medians: List<List<List<Double>>>,
@@ -45,6 +47,28 @@ private fun parseStrokeAnimationData(rawJson: String): StrokeAnimationData? = ru
     StrokeAnimationData(medians, strokes).takeIf { it.medians.isNotEmpty() }
 }.getOrNull()
 
+/**
+ * Parsed stroke data is expensive (Gson over tens of KB per glyph) and WordPage
+ * tiles re-enter composition while scrolling/navigating. A small LRU keeps the
+ * main thread free of repeated parses.
+ */
+private object StrokeAnimationCache {
+    private const val MAX_ENTRIES = 96
+    private val entries = object : LinkedHashMap<String, StrokeAnimationData?>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StrokeAnimationData?>) =
+            size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun read(character: String): Pair<Boolean, StrokeAnimationData?> =
+        if (entries.containsKey(character)) true to entries[character] else false to null
+
+    @Synchronized
+    fun write(character: String, data: StrokeAnimationData?) {
+        entries[character] = data
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WordPage(
@@ -54,11 +78,9 @@ fun WordPage(
     onPracticeClick: (String) -> Unit
 ) {
     BackHandler(enabled = true) { onBackClick() }
-
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
-
     var charData by remember { mutableStateOf<HanziCharacter?>(null) }
     var components by remember { mutableStateOf<List<String>>(emptyList()) }
     var alternateForms by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -78,17 +100,14 @@ fun WordPage(
         components = emptyList()
         alternateForms = emptyList()
         hskLevels = emptyList()
-
         val forms = dao.getWordForms(word)
         val isTraditionalInput =
             forms.none { it.simplified == word } && forms.any { it.traditional == word && it.simplified != word }
-
         val canonicalWord = if (isTraditionalInput) {
             forms.firstOrNull { it.traditional == word && it.simplified != word }?.simplified ?: word
         } else {
             word
         }
-
         alternateForms = if (isTraditionalInput) {
             forms.filter { it.traditional == word }
                 .map { it.simplified }
@@ -101,12 +120,10 @@ fun WordPage(
                 .filter { it != word }
         }
         alternateSectionTitle = if (isTraditionalInput) "Simplified Chinese" else "Traditional Chinese"
-
         // CC-CEDICT is keyed by Simplified form. Traditional input is resolved via
         // the prebuilt form-pair table, but the form the user opened remains visible.
         val loadedCharacter = dao.getCharacterExact(canonicalWord) ?: dao.getCharacterExact(word)
         charData = loadedCharacter
-
         val idsSymbols = setOf(
             '⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷',
             '⿸', '⿹', '⿺', '⿻', '？', ' '
@@ -116,7 +133,6 @@ fun WordPage(
             ?.map { it.toString() }
             ?.distinct()
             ?: emptyList()
-
         hskLevels = dao.getHskLevelsForWord(canonicalWord).ifEmpty {
             dao.getHskLevelsForWord(word)
         }
@@ -137,9 +153,7 @@ fun WordPage(
             }
             Text("Word Details", style = MaterialTheme.typography.titleLarge)
         }
-
         Spacer(modifier = Modifier.height(16.dp))
-
         when {
             isLoading -> Spacer(modifier = Modifier.weight(1f))
             charData == null -> {
@@ -187,7 +201,6 @@ fun WordPage(
                                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy word")
                                     }
                                 }
-
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
@@ -228,7 +241,6 @@ fun WordPage(
                             }
                         }
                     }
-
                     if (components.isNotEmpty()) {
                         item(key = "word-components") {
                             Column {
@@ -248,7 +260,6 @@ fun WordPage(
                             }
                         }
                     }
-
                     item(key = "simplified-stroke-order") {
                         Column {
                             Text("Stroke Order", style = MaterialTheme.typography.titleMedium)
@@ -260,7 +271,6 @@ fun WordPage(
                             )
                         }
                     }
-
                     if (alternateForms.isNotEmpty()) {
                         item(key = "alternate-script-heading") {
                             Text(alternateSectionTitle, style = MaterialTheme.typography.titleMedium)
@@ -291,7 +301,6 @@ fun WordPage(
                 }
             }
         }
-
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedButton(
             onClick = { showAddToListDialog = true },
@@ -302,7 +311,6 @@ fun WordPage(
             Spacer(modifier = Modifier.width(8.dp))
             Text("Add to List", style = MaterialTheme.typography.titleMedium)
         }
-
         Spacer(modifier = Modifier.height(8.dp))
         Button(
             onClick = { onPracticeClick(word) },
@@ -326,7 +334,6 @@ private fun StrokeAnimationStrip(
 ) {
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val glyphs = remember(text) { text.mapIndexed { index, character -> index to character.toString() } }
-
     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         itemsIndexed(glyphs, key = { _, glyph -> "${glyph.first}:${glyph.second}" }) { _, glyph ->
             StrokeAnimationTile(
@@ -348,7 +355,17 @@ private fun StrokeAnimationTile(
     var loaded by remember(character) { mutableStateOf(false) }
 
     LaunchedEffect(character) {
-        animationData = dao.getGraphics(character)?.rawJson?.let(::parseStrokeAnimationData)
+        // Parse off the main thread and reuse cached results: LaunchedEffect runs
+        // on Dispatchers.Main, and Gson over stroke JSON was janking WordPage.
+        val (cached, value) = StrokeAnimationCache.read(character)
+        if (cached) {
+            animationData = value
+        } else {
+            val raw = withContext(Dispatchers.IO) { dao.getGraphics(character)?.rawJson }
+            val parsed = raw?.let { withContext(Dispatchers.Default) { parseStrokeAnimationData(it) } }
+            StrokeAnimationCache.write(character, parsed)
+            animationData = parsed
+        }
         loaded = true
     }
 
