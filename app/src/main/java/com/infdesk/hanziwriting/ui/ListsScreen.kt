@@ -61,7 +61,6 @@ fun ListsScreen(
     val listPreferences = remember {
         context.getSharedPreferences(LIST_ORDER_PREFS, android.content.Context.MODE_PRIVATE)
     }
-
     var showCreateListDialog by remember { mutableStateOf(false) }
     var newListName by remember { mutableStateOf("") }
     var isCreating by remember { mutableStateOf(false) }
@@ -72,7 +71,6 @@ fun ListsScreen(
     var dragVisualOrder by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
     var listPendingDeletion by remember { mutableStateOf<PracticeList?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
-
     // Canonical storage order: index 0 is the physical bottom item.
     val bottomToTopLists = cachedLists.orEmpty()
     // A normal LazyColumn renders top-to-bottom, so reverse only the presentation copy.
@@ -93,7 +91,6 @@ fun ListsScreen(
             ?.mapNotNull { it.toIntOrNull() }
             ?.distinct()
             .orEmpty()
-
         val baseOrder = if (savedIds.isEmpty()) {
             databaseLists.sortedWith(compareBy<PracticeList> { it.createdAt }.thenBy { it.listId })
         } else {
@@ -119,6 +116,8 @@ fun ListsScreen(
     // The target is an absolute visual index, not just the adjacent row. If a
     // fast drag crosses several cards between pointer events, jump directly to
     // the furthest crossed card instead of silently stopping after one swap.
+    // During the drag only in-memory order is updated; SharedPreferences is
+    // written once when the drag ends (see onDragEnd/onDragCancel).
     val moveListVisually = rememberUpdatedState<(Int, Int) -> Unit> { listId, targetVisualIndex ->
         val visual = (dragVisualOrder.ifEmpty { latestBottomToTop.value.asReversed() }).toMutableList()
         val from = visual.indexOfFirst { it.listId == listId }
@@ -127,7 +126,7 @@ fun ListsScreen(
             val moved = visual.removeAt(from)
             visual.add(to, moved)
             dragVisualOrder = visual
-            saveOrder(visual.asReversed())
+            onListsChanged(visual.asReversed())
         }
     }
 
@@ -141,10 +140,8 @@ fun ListsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
         )
-
         when {
             cachedLists == null -> Spacer(modifier = Modifier.weight(1f))
-
             bottomToTopLists.isEmpty() -> {
                 Surface(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -172,7 +169,6 @@ fun ListsScreen(
                     }
                 }
             }
-
             else -> {
                 Text(
                     "Hold the grip and drag to reorder. New lists appear above older ones.",
@@ -180,7 +176,6 @@ fun ListsScreen(
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -189,7 +184,6 @@ fun ListsScreen(
                 ) {
                     items(visualLists, key = { it.listId }) { list ->
                         val isDragging = draggingListId == list.listId
-
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -249,7 +243,6 @@ fun ListsScreen(
                                                 onDrag = { change, dragAmount ->
                                                     change.consume()
                                                     draggedOffsetY += dragAmount.y
-
                                                     val direction = when {
                                                         dragAmount.y < 0f -> -1
                                                         dragAmount.y > 0f -> 1
@@ -261,7 +254,6 @@ fun ListsScreen(
                                                         if (activeInfo != null) {
                                                             val draggedCenter =
                                                                 activeInfo.offset + activeInfo.size / 2f + draggedOffsetY
-
                                                             // Compare against every visible neighbour, not only the
                                                             // immediate one. This handles large pointer deltas and
                                                             // avoids relying on an animated row's old adjacent slot.
@@ -278,7 +270,6 @@ fun ListsScreen(
                                                             } else {
                                                                 crossed.maxByOrNull { it.index }
                                                             }
-
                                                             if (targetInfo != null) {
                                                                 moveListVisually.value(list.listId, targetInfo.index)
                                                                 // The active card's layout slot jumps to the target
@@ -290,6 +281,8 @@ fun ListsScreen(
                                                     }
                                                 },
                                                 onDragEnd = {
+                                                    // Persist once per drag, not per pointer event.
+                                                    saveOrder(latestBottomToTop.value)
                                                     val startOffset = draggedOffsetY
                                                     scope.launch {
                                                         val release = Animatable(startOffset)
@@ -306,6 +299,7 @@ fun ListsScreen(
                                                     }
                                                 },
                                                 onDragCancel = {
+                                                    saveOrder(latestBottomToTop.value)
                                                     val startOffset = draggedOffsetY
                                                     scope.launch {
                                                         val release = Animatable(startOffset)
@@ -330,7 +324,6 @@ fun ListsScreen(
                                         )
                                     }
                                 }
-
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = list.name,
@@ -338,7 +331,6 @@ fun ListsScreen(
                                     modifier = Modifier.weight(1f),
                                     maxLines = 2
                                 )
-
                                 IconButton(onClick = { listPendingDeletion = list }) {
                                     Icon(
                                         Icons.Default.DeleteOutline,
@@ -359,7 +351,6 @@ fun ListsScreen(
                 }
             }
         }
-
         Spacer(modifier = Modifier.height(14.dp))
         Button(
             onClick = { showCreateListDialog = true },
@@ -471,7 +462,6 @@ fun ListsScreen(
             },
             dismissButton = {
                 TextButton(
-                    enabled = !isDeleting,
                     onClick = { listPendingDeletion = null }
                 ) { Text("Cancel") }
             }
