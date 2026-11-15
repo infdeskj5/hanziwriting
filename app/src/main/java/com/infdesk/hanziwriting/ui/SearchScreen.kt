@@ -29,10 +29,16 @@ import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.PinyinUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 private fun isCjkSearchCharacter(char: Char): Boolean =
     char in '\u3400'..'\u4DBF' || char in '\u4E00'..'\u9FFF' ||
         char in '\uF900'..'\uFAFF'
+
+private data class SearchOutcome(
+    val results: List<HanziCharacter>,
+    val displayWords: Map<String, String>
+)
 
 @Composable
 fun SearchScreen(
@@ -56,9 +62,14 @@ fun SearchScreen(
     var displayWords by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var hskLevelsByWord by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
 
-    // Keep the completed-query marker in MainScreen, not here. SearchScreen is
-    // temporarily removed when Word Details opens; lifted state prevents a refetch.
-    val isSearching = searchQuery.isNotBlank() && completedSearchQuery != searchQuery
+    // Track loading independently of the parent query-completion marker. A failed
+    // or interrupted query must never leave the UI displaying "Searching…" forever.
+    var searchInProgress by remember(searchQuery) {
+        mutableStateOf(searchQuery.isNotBlank() && completedSearchQuery != searchQuery)
+    }
+    var searchErrorMessage by remember(searchQuery) { mutableStateOf<String?>(null) }
+    var retryCount by remember(searchQuery) { mutableStateOf(0) }
+    val latestSearchQuery by rememberUpdatedState(searchQuery)
 
     BackHandler(enabled = searchQuery.isNotBlank() || searchResults.isNotEmpty()) {
         focusManager.clearFocus(force = true)
@@ -68,8 +79,11 @@ fun SearchScreen(
         onSearchCompleted("")
     }
 
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.isBlank()) {
+    LaunchedEffect(searchQuery, retryCount) {
+        val requestedQuery = searchQuery
+        if (requestedQuery.isBlank()) {
+            searchInProgress = false
+            searchErrorMessage = null
             onResultsChange(emptyList())
             onSearchCompleted("")
             displayWords = emptyMap()
@@ -77,80 +91,124 @@ fun SearchScreen(
             return@LaunchedEffect
         }
 
-        // Search results are lifted to MainScreen and survive opening Word Details.
-        // Recreate only the light script-display mapping when returning.
-        if (completedSearchQuery == searchQuery) {
-            val restoredForms = try {
-                dao.getSimplifiedForms(searchQuery)
+        // SearchScreen is recreated when returning from Word Details. The results
+        // themselves are retained in MainScreen; only rebuild the display mapping.
+        if (completedSearchQuery == requestedQuery && retryCount == 0) {
+            searchInProgress = false
+            val restoredForms: List<String> = try {
+                withTimeoutOrNull(5_000L) {
+                    if (requestedQuery.all(::isCjkSearchCharacter)) {
+                        dao.getSimplifiedForms(requestedQuery)
+                    } else {
+                        emptyList()
+                    }
+                } ?: emptyList()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 emptyList()
             }
             displayWords = restoredForms
-                .filter { it != searchQuery }
-                .associateWith { searchQuery }
+                .filter { it != requestedQuery }
+                .associateWith { requestedQuery }
             return@LaunchedEffect
         }
 
-        // Reset to the first item. With reverseLayout=true, index 0 is displayed
-        // at the bottom edge, which is the intended thumb-reachable starting point.
-        resultsListState.scrollToItem(0)
-        delay(180)
-        val completedKey = searchQuery
-        val query = searchQuery.trim()
+        searchInProgress = true
+        searchErrorMessage = null
+        var finished = false
+        var markQueryCompleted = false
 
         try {
-            // Traditional -> Simplified conversion is optional: failure/missing
-            // metadata must never prevent the ordinary Hanzi dictionary search.
-            val convertedSimplifiedForms = try {
-                dao.getSimplifiedForms(query).filter { it != query }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                emptyList()
-            }
+            // Debounce rapid typing, but keep the wait short.
+            delay(140L)
+            val query = requestedQuery.trim()
 
-            val queryForms = (listOf(query) + convertedSimplifiedForms).distinct()
-            val directMatches = queryForms.flatMap { form ->
-                dao.searchHanziForSearch(form)
-            }
-
-            // Only expand a multi-character Hanzi query into component-character
-            // lookups. Pinyin and English text must be searched as complete phrases.
-            val componentMatches = queryForms
-                .filter { form -> form.length > 1 && form.all(::isCjkSearchCharacter) }
-                .flatMap { form ->
-                    form.toCharArray().distinct().flatMap { char ->
-                        dao.searchHanziForSearch(char.toString())
+            val outcome = withTimeoutOrNull(20_000L) {
+                if (query.all(::isCjkSearchCharacter)) {
+                    // Chinese-character searches should use the primary-key index,
+                    // not several full-table LIKE scans. Search the exact word and
+                    // then its distinct component characters.
+                    val convertedForms: List<String> = try {
+                        dao.getSimplifiedForms(query).filter { it != query }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        emptyList()
                     }
+
+                    val queryForms = (listOf(query) + convertedForms).distinct()
+                    val matches = LinkedHashMap<String, HanziCharacter>()
+
+                    for (form in queryForms) {
+                        dao.getCharacterExact(form)?.let { matches[it.character] = it }
+                        if (form.length > 1) {
+                            form.toCharArray().distinct().forEach { component ->
+                                dao.getCharacterExact(component.toString())?.let {
+                                    matches[it.character] = it
+                                }
+                            }
+                        }
+                    }
+
+                    // Preserve the former substring-search behavior as a fallback
+                    // only when no exact word or component exists.
+                    if (matches.isEmpty()) {
+                        for (form in queryForms) {
+                            dao.searchHanziForSearch(form).forEach {
+                                matches[it.character] = it
+                            }
+                        }
+                    }
+
+                    val ordered = matches.values
+                        .sortedBy { it.character !in queryForms }
+                    SearchOutcome(
+                        results = ordered,
+                        displayWords = convertedForms.associateWith { query }
+                    )
+                } else {
+                    // Pinyin and English retain the existing flexible substring
+                    // search, but execute one combined dictionary query.
+                    SearchOutcome(
+                        results = dao.searchHanziForSearch(query),
+                        displayWords = emptyMap()
+                    )
                 }
+            }
 
-            val results = (directMatches + componentMatches)
-                .distinctBy { it.character }
-                .sortedBy { it.character !in queryForms }
+            if (outcome == null) {
+                searchErrorMessage = "The search took too long. Please try again."
+                onResultsChange(emptyList())
+                displayWords = emptyMap()
+                android.util.Log.w("HanziSearch", "Search timed out for: $query")
+            } else {
+                displayWords = outcome.displayWords
+                onResultsChange(outcome.results)
+                markQueryCompleted = true
+            }
 
-            displayWords = convertedSimplifiedForms.associateWith { query }
-            onResultsChange(results)
-            onSearchCompleted(completedKey)
+            finished = true
             resultsListState.scrollToItem(0)
         } catch (cancelled: CancellationException) {
+            // A newer query or navigation cancelled this one. Do not mark it
+            // completed; the active query's own effect will update the screen.
             throw cancelled
         } catch (error: Exception) {
-            // Keep a compatibility fallback for databases/app builds that still
-            // contain the older DAO query but not the new substring query.
-            val fallback = try {
-                dao.searchHanziExact(query)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                emptyList()
-            }
-            android.util.Log.e("HanziSearch", "Search failed for query: $query", error)
+            android.util.Log.e("HanziSearch", "Search failed for: $requestedQuery", error)
+            searchErrorMessage = "Couldn't complete the search. Please try again."
             displayWords = emptyMap()
-            onResultsChange(fallback)
-            onSearchCompleted(completedKey)
-            resultsListState.scrollToItem(0)
+            onResultsChange(emptyList())
+            markQueryCompleted = false
+            finished = true
+        } finally {
+            // Only the still-current query may finish its loading state or update
+            // MainScreen's completion marker. Failed/timed-out searches stay
+            // retryable when the user leaves this screen and comes back.
+            if (finished && latestSearchQuery == requestedQuery) {
+                searchInProgress = false
+                onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
+            }
         }
     }
 
@@ -158,9 +216,8 @@ fun SearchScreen(
         if (searchResults.isEmpty()) {
             hskLevelsByWord = emptyMap()
         } else {
-            runCatching {
-                dao.getHskLevelsForWords(searchResults.map { it.character }.distinct())
-            }.onSuccess { tags ->
+            try {
+                val tags = dao.getHskLevelsForWords(searchResults.map { it.character }.distinct())
                 val levelsByForm = mutableMapOf<String, MutableSet<String>>()
                 tags.forEach { tag ->
                     levelsByForm.getOrPut(tag.simplified) { mutableSetOf() }.add(tag.level)
@@ -169,9 +226,16 @@ fun SearchScreen(
                     }
                 }
                 hskLevelsByWord = levelsByForm.mapValues { (_, levels) -> levels.toList() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                android.util.Log.w("HanziSearch", "Unable to load HSK labels", error)
+                hskLevelsByWord = emptyMap()
             }
         }
     }
+
+    val isSearching = searchInProgress
 
     // reverseLayout keeps the highest-priority result (index zero) anchored at
     // the bottom edge for both short and long result sets.
@@ -230,6 +294,24 @@ fun SearchScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         StrokeRulesCarousel(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+
+                searchErrorMessage != null -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            searchErrorMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        TextButton(onClick = { retryCount += 1 }) {
+                            Text("Try again")
+                        }
                     }
                 }
 
