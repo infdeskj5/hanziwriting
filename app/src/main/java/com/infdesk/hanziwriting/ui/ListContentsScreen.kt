@@ -26,6 +26,7 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun ListContentsScreen(
@@ -38,12 +39,10 @@ fun ListContentsScreen(
     onPracticeSelectedClick: (List<String>) -> Unit
 ) {
     BackHandler(enabled = true, onBack = onBackClick)
-
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-
     var characters by remember(listId) { mutableStateOf<List<String>>(emptyList()) }
     var listName by remember(listId) { mutableStateOf("List contents") }
     var isLoading by remember(listId) { mutableStateOf(true) }
@@ -66,6 +65,13 @@ fun ListContentsScreen(
         } finally {
             isLoading = false
         }
+        // Anchor the first inserted item to the bottom edge once the list is on
+        // screen (the visual order is reversed, so the bottom is the last index).
+        // scrollToItem clamps to max scroll for long lists and is a no-op offset
+        // for short ones, where Alignment.Bottom does the anchoring.
+        if (characters.isNotEmpty()) {
+            withTimeoutOrNull(1_000L) { listState.scrollToItem(characters.lastIndex, 0) }
+        }
     }
 
     LaunchedEffect(showAddSelectedDialog) {
@@ -78,6 +84,11 @@ fun ListContentsScreen(
         characters.filter { it in selectedItems }
     }
     val canAct = selectedInList.isNotEmpty() && !isBusy
+    // Normal (non-reversed) LazyColumn + reversed data + bottom alignment, matching
+    // ListsScreen. On Compose 1.6.x the reverseLayout path both mis-anchors short
+    // content and pays a mirrored-placement cost on every scroll pass, which is
+    // what made 5 000-row curriculum lists feel slow and unstable.
+    val visualItems = remember(characters) { characters.asReversed() }
 
     Column(
         modifier = Modifier
@@ -102,9 +113,7 @@ fun ListContentsScreen(
                 }
             }
         }
-
         Spacer(modifier = Modifier.height(10.dp))
-
         when {
             isLoading -> {
                 Box(
@@ -112,7 +121,6 @@ fun ListContentsScreen(
                     contentAlignment = Alignment.Center
                 ) { CircularProgressIndicator() }
             }
-
             characters.isEmpty() -> {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -127,18 +135,14 @@ fun ListContentsScreen(
                     Text("Back to Lists")
                 }
             }
-
             else -> {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    // Item 0 is anchored to the bottom. This preserves the list's
-                    // established bottom-first ordering without OFFSET page loads.
-                    reverseLayout = true,
                     contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
                 ) {
-                    items(characters, key = { it }) { item ->
+                    items(visualItems, key = { it }) { item ->
                         val isSelected = item in selectedItems
                         Row(
                             modifier = Modifier
@@ -192,9 +196,7 @@ fun ListContentsScreen(
                         }
                     }
                 }
-
                 Spacer(modifier = Modifier.height(8.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -223,7 +225,6 @@ fun ListContentsScreen(
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) { Text("Clear", maxLines = 1) }
                 }
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
