@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.room.withTransaction
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -41,8 +42,8 @@ private const val LIST_BACKUP_VERSION = 1
 fun SettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
-
+    val database = remember { AppDatabase.getDatabase(context) }
+    val dao = remember { database.hanziDao() }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     val practicePreferences = remember {
@@ -133,7 +134,6 @@ fun SettingsScreen() {
                         }
                         val listArray = root.getAsJsonArray("lists")
                             ?: error("The backup doesn't contain a lists array.")
-
                         var listsProcessed = 0
                         var newItems = 0
                         val importedListIds = mutableListOf<Int>()
@@ -143,11 +143,9 @@ fun SettingsScreen() {
                             val name = entry.get("name")?.takeUnless { it.isJsonNull }
                                 ?.asString?.trim().orEmpty()
                             if (name.isBlank()) continue
-
                             val createdAt = entry.get("createdAt")
                                 ?.takeUnless { it.isJsonNull }?.asLong
                                 ?: System.currentTimeMillis()
-
                             val existingList = dao.getListByName(name)
                             val targetListId = existingList?.listId ?: run {
                                 val insertedId = dao.insertList(
@@ -157,9 +155,7 @@ fun SettingsScreen() {
                                 else dao.getListByName(name)?.listId
                                     ?: error("Couldn't create or locate list '$name'.")
                             }
-
                             importedListIds += targetListId
-
                             val alreadyPresent = if (existingList != null) {
                                 dao.getCharactersInList(targetListId).toSet()
                             } else emptySet()
@@ -170,16 +166,24 @@ fun SettingsScreen() {
                                 ?.filter { it.isNotEmpty() }
                                 ?.distinct()
                                 .orEmpty()
-
-                            characters.forEach { character ->
-                                dao.addCharacterToList(
-                                    ListItem(listId = targetListId, character = character)
-                                )
-                                if (character !in alreadyPresent) newItems++
+                            // One transaction per list with chunked batch inserts.
+                            // The previous per-character insert loop meant one
+                            // commit per row, which took minutes on large backups.
+                            val toInsert = characters.filterNot { it in alreadyPresent }
+                            if (toInsert.isNotEmpty()) {
+                                database.withTransaction {
+                                    toInsert.chunked(400).forEach { chunk ->
+                                        dao.addCharactersToList(
+                                            chunk.map { character ->
+                                                ListItem(listId = targetListId, character = character)
+                                            }
+                                        )
+                                    }
+                                }
                             }
+                            newItems += toInsert.size
                             listsProcessed++
                         }
-
                         // Preserve the backup's bottom-to-top order, then retain any
                         // local lists that were not part of this backup.
                         val orderPreferences = context.getSharedPreferences(
@@ -195,7 +199,6 @@ fun SettingsScreen() {
                         orderPreferences.edit()
                             .putString("bottom_to_top_ids", mergedOrder.joinToString(","))
                             .apply()
-
                         "Imported/merged $listsProcessed list(s) and $newItems item(s)."
                     }
                     statusMessage = result
@@ -227,9 +230,7 @@ fun SettingsScreen() {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.outline
         )
-
         Spacer(modifier = Modifier.height(12.dp))
-
         statusMessage?.let {
             Text(
                 it,
@@ -241,7 +242,6 @@ fun SettingsScreen() {
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
             )
         }
-
         VocabularyListsSetting(dao = dao)
         Text(
             "HSK 3.0 data by Gushi · TOCFL data by LinZi · CC BY-SA 4.0",
@@ -249,9 +249,7 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.fillMaxWidth().padding(top = 5.dp)
         )
-
         Spacer(modifier = Modifier.height(8.dp))
-
         PracticeSettingCard(
             title = "Use original Hanzi strokes",
             description = "After each correct stroke, show the original filled stroke shape instead of your rounded pen line.",
@@ -263,9 +261,7 @@ fun SettingsScreen() {
                     .apply()
             }
         )
-
         Spacer(modifier = Modifier.height(8.dp))
-
         PracticeSettingCard(
             title = "Practice one character at a time",
             description = "Complete all available learning steps for one Hanzi before moving to the next.",
@@ -277,9 +273,7 @@ fun SettingsScreen() {
                     .apply()
             }
         )
-
         Spacer(modifier = Modifier.height(10.dp))
-
         OutlinedButton(
             onClick = {
                 scope.launch {
@@ -293,7 +287,7 @@ fun SettingsScreen() {
                                 if (file.exists()) sb.append(file.readText()) else sb.append("(empty)")
                             }
                             val crashLogs = CrashHandler.getCrashLogs()
-                            sb.append("\n\n=== CRASH LOGS (${crashLogs.size}) ===\n")
+                            sb.append("\n=== CRASH LOGS (${crashLogs.size}) ===\n")
                             if (crashLogs.isEmpty()) sb.append("(none)")
                             else crashLogs.forEach { file ->
                                 sb.append(file.readText()).append("\n---\n")
@@ -330,9 +324,7 @@ fun SettingsScreen() {
             Spacer(modifier = Modifier.width(9.dp))
             Text("Export Logs & Debug Report")
         }
-
         Spacer(modifier = Modifier.height(10.dp))
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -363,7 +355,6 @@ fun SettingsScreen() {
         }
     }
 }
-
 
 @Composable
 private fun PracticeSettingCard(
