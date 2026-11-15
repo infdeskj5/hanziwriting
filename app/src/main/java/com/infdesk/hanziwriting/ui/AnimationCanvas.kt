@@ -247,7 +247,7 @@ fun AnimationCanvas(
     loop: Boolean = false,
     showGuide: Boolean = true,
     useSvgFill: Boolean = true,
-    @Suppress("UNUSED_PARAMETER") frameDelayMs: Int = 16,
+    frameDelayMs: Int = 16,
     onComplete: () -> Unit = {}
 ) {
     val density = LocalDensity.current
@@ -471,6 +471,8 @@ fun AnimationCanvas(
                     // changing the total duration of the stroke.
                     val easedTime = easeInOutCubic(fraction)
                     progress.value = stroke.paceProfile.distanceFractionAt(easedTime)
+                    val extraDelay = (frameDelayMs.coerceAtLeast(16) - 16).toLong()
+                    if (extraDelay > 0L) delay(extraDelay)
                 } while (fraction < 1f)
 
                 // Move the stroke into the completed range. The Canvas now
