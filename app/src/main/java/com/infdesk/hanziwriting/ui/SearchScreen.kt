@@ -33,7 +33,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 private fun isCjkSearchCharacter(char: Char): Boolean =
     char in '㐀'..'䶿' || char in '一'..'鿿' ||
-        char in '豈'..'﫿'
+        char in '豈'..'﫿'
 
 private data class SearchOutcome(
     val results: List<HanziCharacter>,
@@ -170,16 +170,18 @@ fun SearchScreen(
                 markQueryCompleted = true
             }
             finished = true
-            // Publish completion BEFORE scrolling so the LazyColumn can be composed
-            // (avoids the "Searching…" deadlock on versions where scrollToItem waits
-            // for attachment).
+            // Publish completion BEFORE scrolling so the LazyColumn exists when the
+            // scroll runs (avoids the old "Searching…" deadlock).
             searchInProgress = false
             onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
             if (outcome != null && outcome.results.isNotEmpty()) {
-                // Reset to index 0 AND offset 0. A stale scroll offset from a previous
-                // longer result set would otherwise lift a short/single result away
-                // from the bottom anchor. Bounded so a scroll can never stall search.
-                withTimeoutOrNull(1_000L) { resultsListState.scrollToItem(0, 0) }
+                // The list is no longer reverseLayout: the visual order is the
+                // reversed result list, so the bottom edge is the LAST visual index.
+                // scrollToItem clamps to max scroll, which puts the priority result
+                // (original index 0) flush against the bottom for both one-card and
+                // full-page result sets. Bounded so a scroll can never stall search.
+                val bottomIndex = outcome.results.size - 1
+                withTimeoutOrNull(1_000L) { resultsListState.scrollToItem(bottomIndex, 0) }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -222,7 +224,13 @@ fun SearchScreen(
     }
 
     val isSearching = searchInProgress
-    val visualResults = searchResults
+    // Normal (non-reversed) LazyColumn + reversed data + bottom alignment. This is
+    // the same pattern ListsScreen uses: on Compose 1.6.x a reverseLayout list only
+    // bottom-anchors content that fills the viewport (a single result card was
+    // placed at the top), and its mirrored placement path is also the slow one for
+    // long lists. Alignment.Bottom guarantees the block sits at the bottom edge
+    // when results are short; scrollToItem(lastIndex) guarantees it for long sets.
+    val visualResults = remember(searchResults) { searchResults.asReversed() }
 
     Column(
         modifier = Modifier
@@ -307,13 +315,8 @@ fun SearchScreen(
                     LazyColumn(
                         state = resultsListState,
                         modifier = Modifier.fillMaxSize(),
-                        reverseLayout = true,
                         contentPadding = PaddingValues(vertical = 4.dp),
-                        // With reverseLayout, LazyList mirrors the arrangement offsets
-                        // for short content, so Alignment.Top here anchors the block
-                        // (including a single card) to the VISUAL bottom. Do not switch
-                        // this to Alignment.Bottom: that would mirror to the top.
-                        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Top)
+                        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom)
                     ) {
                         items(visualResults, key = { it.character }) { character ->
                             val displayWord = displayWords[character.character] ?: character.character
