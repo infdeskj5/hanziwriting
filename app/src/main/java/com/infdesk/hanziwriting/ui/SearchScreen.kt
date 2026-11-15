@@ -62,8 +62,6 @@ fun SearchScreen(
     var displayWords by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var hskLevelsByWord by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
 
-    // Track loading independently of the parent query-completion marker. A failed
-    // or interrupted query must never leave the UI displaying "Searching…" forever.
     var searchInProgress by remember(searchQuery) {
         mutableStateOf(searchQuery.isNotBlank() && completedSearchQuery != searchQuery)
     }
@@ -91,8 +89,6 @@ fun SearchScreen(
             return@LaunchedEffect
         }
 
-        // SearchScreen is recreated when returning from Word Details. The results
-        // themselves are retained in MainScreen; only rebuild the display mapping.
         if (completedSearchQuery == requestedQuery && retryCount == 0) {
             searchInProgress = false
             val restoredForms: List<String> = try {
@@ -119,14 +115,10 @@ fun SearchScreen(
         var finished = false
         var markQueryCompleted = false
         try {
-            // Debounce rapid typing, but keep the wait short.
             delay(140L)
             val query = requestedQuery.trim()
             val outcome = withTimeoutOrNull(20_000L) {
                 if (query.all(::isCjkSearchCharacter)) {
-                    // Chinese-character searches should use the primary-key index,
-                    // not several full-table LIKE scans. Search the exact word and
-                    // then its distinct component characters.
                     val convertedForms: List<String> = try {
                         dao.getSimplifiedForms(query).filter { it != query }
                     } catch (cancelled: CancellationException) {
@@ -146,8 +138,6 @@ fun SearchScreen(
                             }
                         }
                     }
-                    // Preserve the former substring-search behavior as a fallback
-                    // only when no exact word or component exists.
                     if (matches.isEmpty()) {
                         for (form in queryForms) {
                             dao.searchHanziForSearch(form).forEach {
@@ -162,8 +152,6 @@ fun SearchScreen(
                         displayWords = convertedForms.associateWith { query }
                     )
                 } else {
-                    // Pinyin and English retain the existing flexible substring
-                    // search, but execute one combined dictionary query.
                     SearchOutcome(
                         results = dao.searchHanziForSearch(query),
                         displayWords = emptyMap()
@@ -182,23 +170,18 @@ fun SearchScreen(
                 markQueryCompleted = true
             }
             finished = true
-            // FIX: publish completion BEFORE scrolling. On Compose versions where
-            // scrollToItem() suspends until the LazyListState is attached to a
-            // composed LazyColumn, the list only exists once searchInProgress is
-            // false. Clearing the flag here (not only in `finally`) removes the
-            // circular wait that kept the UI on "Searching…" forever.
+            // Publish completion BEFORE scrolling so the LazyColumn can be composed
+            // (avoids the "Searching…" deadlock on versions where scrollToItem waits
+            // for attachment).
             searchInProgress = false
             onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
             if (outcome != null && outcome.results.isNotEmpty()) {
-                // Only scroll when the results list will actually be composed, and
-                // bound the call so a scroll can never stall the pipeline again.
-                // scrollToItem exists in all Compose versions; requestScrollToItem
-                // would require Foundation 1.2.0+, which this project predates.
-                withTimeoutOrNull(1_000L) { resultsListState.scrollToItem(0) }
+                // Reset to index 0 AND offset 0. A stale scroll offset from a previous
+                // longer result set would otherwise lift a short/single result away
+                // from the bottom anchor. Bounded so a scroll can never stall search.
+                withTimeoutOrNull(1_000L) { resultsListState.scrollToItem(0, 0) }
             }
         } catch (cancelled: CancellationException) {
-            // A newer query or navigation cancelled this one. Do not mark it
-            // completed; the active query's own effect will update the screen.
             throw cancelled
         } catch (error: Exception) {
             android.util.Log.e("HanziSearch", "Search failed for: $requestedQuery", error)
@@ -208,11 +191,6 @@ fun SearchScreen(
             markQueryCompleted = false
             finished = true
         } finally {
-            // Only the still-current query may finish its loading state or update
-            // MainScreen's completion marker. Failed/timed-out searches stay
-            // retryable when the user leaves this screen and comes back.
-            // (On the success path these writes are idempotent repeats of the
-            // values already published above before the scroll.)
             if (finished && latestSearchQuery == requestedQuery) {
                 searchInProgress = false
                 onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
@@ -244,8 +222,6 @@ fun SearchScreen(
     }
 
     val isSearching = searchInProgress
-    // reverseLayout keeps the highest-priority result (index zero) anchored at
-    // the bottom edge for both short and long result sets.
     val visualResults = searchResults
 
     Column(
@@ -270,8 +246,6 @@ fun SearchScreen(
             )
         }
 
-        // Clicking unused space clears the text-field focus/cursor. Child cards and
-        // carousel controls still receive their own clicks normally.
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -335,7 +309,11 @@ fun SearchScreen(
                         modifier = Modifier.fillMaxSize(),
                         reverseLayout = true,
                         contentPadding = PaddingValues(vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        // With reverseLayout, LazyList mirrors the arrangement offsets
+                        // for short content, so Alignment.Top here anchors the block
+                        // (including a single card) to the VISUAL bottom. Do not switch
+                        // this to Alignment.Bottom: that would mirror to the top.
+                        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Top)
                     ) {
                         items(visualResults, key = { it.character }) { character ->
                             val displayWord = displayWords[character.character] ?: character.character
@@ -354,8 +332,6 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // A stationary placeholder avoids the Material floating-label position
-        // animation that appeared stuttery on the user's device.
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
