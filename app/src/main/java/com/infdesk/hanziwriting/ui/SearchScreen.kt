@@ -182,14 +182,20 @@ fun SearchScreen(
                 markQueryCompleted = true
             }
             finished = true
-            // FIX: use the non-suspending requestScrollToItem instead of
-            // scrollToItem(0). scrollToItem suspends until the LazyListState is
-            // attached to a composed LazyColumn, but while searchInProgress is
-            // true the list is not composed, and it is only cleared in `finally`
-            // after this call returns -> deadlock ("Searching…" forever).
-            // requestScrollToItem records the request and applies it as soon as
-            // the list appears; it is also safe for empty/error result states.
-            resultsListState.requestScrollToItem(0)
+            // FIX: publish completion BEFORE scrolling. On Compose versions where
+            // scrollToItem() suspends until the LazyListState is attached to a
+            // composed LazyColumn, the list only exists once searchInProgress is
+            // false. Clearing the flag here (not only in `finally`) removes the
+            // circular wait that kept the UI on "Searching…" forever.
+            searchInProgress = false
+            onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
+            if (outcome != null && outcome.results.isNotEmpty()) {
+                // Only scroll when the results list will actually be composed, and
+                // bound the call so a scroll can never stall the pipeline again.
+                // scrollToItem exists in all Compose versions; requestScrollToItem
+                // would require Foundation 1.2.0+, which this project predates.
+                withTimeoutOrNull(1_000L) { resultsListState.scrollToItem(0) }
+            }
         } catch (cancelled: CancellationException) {
             // A newer query or navigation cancelled this one. Do not mark it
             // completed; the active query's own effect will update the screen.
@@ -205,6 +211,8 @@ fun SearchScreen(
             // Only the still-current query may finish its loading state or update
             // MainScreen's completion marker. Failed/timed-out searches stay
             // retryable when the user leaves this screen and comes back.
+            // (On the success path these writes are idempotent repeats of the
+            // values already published above before the scroll.)
             if (finished && latestSearchQuery == requestedQuery) {
                 searchInProgress = false
                 onSearchCompleted(if (markQueryCompleted) requestedQuery else "")
