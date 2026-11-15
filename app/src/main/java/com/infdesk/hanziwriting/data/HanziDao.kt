@@ -33,6 +33,11 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_characters WHERE character = :character LIMIT 1")
     suspend fun getCharacterExact(character: String): HanziCharacter?
 
+    /** Batched planning lookup for PracticeViewModel. Callers must chunk the
+     * input (<= ~300 items) to stay inside SQLite's bind-variable limit. */
+    @Query("SELECT * FROM hanzi_characters WHERE character IN (:characters)")
+    suspend fun getCharactersBatch(characters: List<String>): List<HanziCharacter>
+
     @Query("SELECT * FROM hanzi_graphics WHERE character = :character LIMIT 1")
     suspend fun getGraphics(character: String): HanziGraphics?
 
