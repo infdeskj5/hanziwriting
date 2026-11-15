@@ -19,7 +19,9 @@ fun ListPracticeScreen(
     var characters by remember(listId) { mutableStateOf<List<String>?>(null) }
 
     LaunchedEffect(listId) {
-        characters = dao.getCharactersInList(listId)
+        // Insertion order keeps practice order stable; distinct() shrinks the
+        // payload handed to PracticeViewModel (it also de-duplicates internally).
+        characters = dao.getCharactersInListInInsertionOrder(listId).distinct()
     }
 
     when {
