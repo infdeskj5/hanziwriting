@@ -67,6 +67,9 @@ fun ListsScreen(
     var isCreating by remember { mutableStateOf(false) }
     var draggingListId by remember { mutableStateOf<Int?>(null) }
     var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    // An immediate visual-order snapshot prevents rapid pointer events from reading
+    // a stale Compose list while the reordered cards are still animating.
+    var dragVisualOrder by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
     var listPendingDeletion by remember { mutableStateOf<PracticeList?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
 
@@ -113,14 +116,17 @@ fun ListsScreen(
         }
     }
 
-    // direction is in visual coordinates: -1 means up, +1 means down.
-    val moveListVisually = rememberUpdatedState<(Int, Int) -> Unit> { listId, visualDirection ->
-        val visual = latestBottomToTop.value.asReversed().toMutableList()
+    // The target is an absolute visual index, not just the adjacent row. If a
+    // fast drag crosses several cards between pointer events, jump directly to
+    // the furthest crossed card instead of silently stopping after one swap.
+    val moveListVisually = rememberUpdatedState<(Int, Int) -> Unit> { listId, targetVisualIndex ->
+        val visual = (dragVisualOrder.ifEmpty { latestBottomToTop.value.asReversed() }).toMutableList()
         val from = visual.indexOfFirst { it.listId == listId }
-        val to = from + visualDirection
-        if (from >= 0 && to in visual.indices) {
+        val to = targetVisualIndex.coerceIn(0, visual.lastIndex)
+        if (from >= 0 && to in visual.indices && from != to) {
             val moved = visual.removeAt(from)
             visual.add(to, moved)
+            dragVisualOrder = visual
             saveOrder(visual.asReversed())
         }
     }
@@ -236,6 +242,7 @@ fun ListsScreen(
                                             detectDragGesturesAfterLongPress(
                                                 onDragStart = {
                                                     draggedOffsetY = 0f
+                                                    dragVisualOrder = latestBottomToTop.value.asReversed()
                                                     draggingListId = list.listId
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 },
@@ -252,24 +259,32 @@ fun ListsScreen(
                                                         val visible = listState.layoutInfo.visibleItemsInfo
                                                         val activeInfo = visible.firstOrNull { it.key == list.listId }
                                                         if (activeInfo != null) {
-                                                            val targetIndex = activeInfo.index + direction
-                                                            val targetInfo = visible.firstOrNull { it.index == targetIndex }
+                                                            val draggedCenter =
+                                                                activeInfo.offset + activeInfo.size / 2f + draggedOffsetY
+
+                                                            // Compare against every visible neighbour, not only the
+                                                            // immediate one. This handles large pointer deltas and
+                                                            // avoids relying on an animated row's old adjacent slot.
+                                                            val crossed = visible.filter { candidate ->
+                                                                candidate.key != list.listId && when {
+                                                                    direction < 0 -> candidate.index < activeInfo.index &&
+                                                                        draggedCenter < candidate.offset + candidate.size / 2f
+                                                                    else -> candidate.index > activeInfo.index &&
+                                                                        draggedCenter > candidate.offset + candidate.size / 2f
+                                                                }
+                                                            }
+                                                            val targetInfo = if (direction < 0) {
+                                                                crossed.minByOrNull { it.index }
+                                                            } else {
+                                                                crossed.maxByOrNull { it.index }
+                                                            }
+
                                                             if (targetInfo != null) {
-                                                                val activeCenter = activeInfo.offset + activeInfo.size / 2f
-                                                                val targetCenter = targetInfo.offset + targetInfo.size / 2f
-                                                                val midpoint = (activeCenter + targetCenter) / 2f
-                                                                val draggedCenter = activeCenter + draggedOffsetY
-                                                                val crossed = if (direction < 0) {
-                                                                    draggedCenter < midpoint
-                                                                } else {
-                                                                    draggedCenter > midpoint
-                                                                }
-                                                                if (crossed) {
-                                                                    moveListVisually.value(list.listId, direction)
-                                                                    // Keep the card underneath the finger after its layout slot changes.
-                                                                    draggedOffsetY += activeInfo.offset - targetInfo.offset
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                }
+                                                                moveListVisually.value(list.listId, targetInfo.index)
+                                                                // The active card's layout slot jumps to the target
+                                                                // immediately; compensate so it stays under the finger.
+                                                                draggedOffsetY += activeInfo.offset - targetInfo.offset
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                             }
                                                         }
                                                     }
@@ -287,6 +302,7 @@ fun ListsScreen(
                                                         ) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
+                                                        dragVisualOrder = emptyList()
                                                     }
                                                 },
                                                 onDragCancel = {
@@ -296,6 +312,7 @@ fun ListsScreen(
                                                         release.animateTo(0f, spring()) { draggedOffsetY = value }
                                                         draggingListId = null
                                                         draggedOffsetY = 0f
+                                                        dragVisualOrder = emptyList()
                                                     }
                                                 }
                                             )
