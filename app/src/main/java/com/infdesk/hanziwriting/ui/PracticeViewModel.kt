@@ -18,7 +18,10 @@ import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class PracticePhase {
     ANIMATION,
@@ -41,21 +44,23 @@ data class CharacterProgress(
     val strokes: List<String> = emptyList(),
     val orderedComponents: List<ComponentInfo> = emptyList(),
     val idsRoot: IdsNode? = null,
-    val leafRank: Map<Int, Int> = emptyMap()
+    val leafRank: Map<Int, Int> = emptyMap(),
+    // Tier 1 done: dictionary row + IDS tree + component count are known, so
+    // phase planning is valid even before stroke assets arrive.
+    val planned: Boolean = false,
+    // Tier 2 done: stroke graphics parsed and component order refined.
+    val assetsLoaded: Boolean = false
 ) {
     fun getPhases(): List<PracticePhase> {
         val list = mutableListOf(
             PracticePhase.ANIMATION,
             PracticePhase.TRACE_WITH_TEMPLATE
         )
-
         if (orderedComponents.size > 1) {
             list.add(PracticePhase.STRUCTURE_QUIZ)
         }
-
         list.add(PracticePhase.TRACE_BLIND_TEMPLATE)
         list.add(PracticePhase.MEMORY_DRAW)
-
         return list
     }
 }
@@ -64,9 +69,7 @@ class PracticeViewModel(
     private val database: AppDatabase,
     private val practiceCharactersIndividually: Boolean = false
 ) : ViewModel() {
-
     val characters = mutableStateListOf<CharacterProgress>()
-
     val allPossiblePhases = listOf(
         PracticePhase.ANIMATION,
         PracticePhase.TRACE_WITH_TEMPLATE,
@@ -74,129 +77,158 @@ class PracticeViewModel(
         PracticePhase.TRACE_BLIND_TEMPLATE,
         PracticePhase.MEMORY_DRAW
     )
-
     var currentGlobalPhaseIndex by mutableIntStateOf(0)
         private set
-
     var currentCharIndex by mutableIntStateOf(0)
         private set
-
     val currentGlobalPhase: PracticePhase
         get() = allPossiblePhases[
             currentGlobalPhaseIndex.coerceIn(0, allPossiblePhases.lastIndex)
         ]
-
     val currentChar: CharacterProgress?
         get() = characters.getOrNull(currentCharIndex)
-
     var isAllComplete by mutableStateOf(false)
         private set
-
     var waitingForNext by mutableStateOf(false)
         private set
-
     var currentStrokeIndex by mutableIntStateOf(0)
         private set
-
     var totalErrors by mutableIntStateOf(0)
         private set
-
     val currentStrokePoints = mutableStateListOf<Offset>()
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
     val usedOptionIds = mutableStateListOf<Int>()
 
     private val gson = Gson()
+    private var assetJob: Job? = null
 
     fun loadCharacters(input: String) {
+        assetJob?.cancel()
         characters.clear()
         resetStrokeState()
-
         isAllComplete = false
         waitingForNext = false
         currentGlobalPhaseIndex = 0
         currentCharIndex = 0
-
-        input.forEach {
-            characters.add(CharacterProgress(character = it.toString()))
-        }
-
+        // Practice each distinct character once per session. Curriculum lists
+        // repeat characters hundreds of times; practising (and loading/parsing)
+        // every occurrence was the main cause of the multi-second freeze when
+        // opening HSK/TOCFL-sized lists.
+        val distinctCharacters = input.toList().map { it.toString() }.distinct()
+        distinctCharacters.forEach { characters.add(CharacterProgress(character = it)) }
         if (characters.isEmpty()) {
             isAllComplete = true
             return
         }
-
         viewModelScope.launch {
-            characters.forEachIndexed { index, cp ->
-                val charData = database.hanziDao().getCharacterExact(cp.character)
-                val graphicsData = database.hanziDao().getGraphics(cp.character)
-
-                if (charData != null && graphicsData != null) {
-                    val type = object : TypeToken<Map<String, Any>>() {}.type
-                    val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
-
-                    @Suppress("UNCHECKED_CAST")
-                    val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
-
-                    @Suppress("UNCHECKED_CAST")
-                    val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
-
-                    val idsRoot = IdsParser.parse(charData.decomposition)
+            // Tier 1 (planning): batched dictionary lookups + cheap IDS parsing,
+            // entirely off the main thread. Stroke graphics JSON is NOT touched
+            // here, so even several thousand characters prepare quickly.
+            val rowsByCharacter = withContext(Dispatchers.Default) {
+                val dao = database.hanziDao()
+                val rows = HashMap<String, HanziCharacter>(distinctCharacters.size * 2)
+                distinctCharacters.chunked(300).forEach { chunk ->
+                    dao.getCharactersBatch(chunk).forEach { rows[it.character] = it }
+                }
+                rows
+            }
+            withContext(Dispatchers.Default) {
+                for (index in characters.indices) {
+                    val cp = characters[index]
+                    val row = rowsByCharacter[cp.character]
+                    if (row == null) {
+                        // No dictionary entry: nothing to plan or animate.
+                        characters[index] = cp.copy(planned = true, assetsLoaded = true)
+                        continue
+                    }
+                    val idsRoot = IdsParser.parse(row.decomposition)
                     val leaves = IdsParser.getLeavesWithIndex(idsRoot)
-
-                    val orderedComponents = mutableListOf<ComponentInfo>()
-                    val leafRank = mutableMapOf<Int, Int>()
-                    val firstAppearance = mutableMapOf<Int, Int>()
-
-                    if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
-                        try {
-                            val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
-                            val matches: List<List<Number>?> =
-                                gson.fromJson(charData.matchesJson, matchesType)
-
-                            matches.forEachIndexed { strokeIndex, path ->
-                                if (path != null) {
-                                    val intPath = path.map { it.toInt() }
-                                    val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
-
-                                    if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
-                                        firstAppearance[leafIndex] = strokeIndex
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            DebugLog.e("PracticeVM", "matches parse failed", e)
-                        }
+                    val ordered = leaves.mapIndexed { rank, leaf ->
+                        ComponentInfo(char = leaf.char, leafIndex = leaf.index, order = rank)
                     }
-
-                    val sortedLeaves = leaves.sortedBy {
-                        firstAppearance[it.index] ?: Int.MAX_VALUE
-                    }
-
-                    sortedLeaves.forEachIndexed { rank, leaf ->
-                        orderedComponents.add(
-                            ComponentInfo(
-                                char = leaf.char,
-                                leafIndex = leaf.index,
-                                order = rank
-                            )
-                        )
-                        leafRank[leaf.index] = rank
-                    }
-
                     characters[index] = cp.copy(
-                        charData = charData,
-                        medians = medians,
-                        strokes = strokes,
-                        orderedComponents = orderedComponents,
+                        charData = row,
+                        orderedComponents = ordered,
                         idsRoot = idsRoot,
-                        leafRank = leafRank
+                        leafRank = ordered.associate { it.leafIndex to it.order },
+                        planned = true
                     )
                 }
             }
-
             alignCurrentPosition()
         }
+    }
+
+    /**
+     * Tier 2 (assets): parse the heavy stroke graphics JSON and refine the
+     * component writing order for the current character plus a small lookahead.
+     * Everything else stays unparsed until (and unless) it becomes current.
+     */
+    private fun scheduleAssetLoad(fromIndex: Int) {
+        if (isAllComplete || characters.isEmpty()) return
+        assetJob?.cancel()
+        val startIndex = fromIndex.coerceIn(0, characters.lastIndex)
+        assetJob = viewModelScope.launch {
+            val dao = database.hanziDao()
+            for (index in startIndex until minOf(startIndex + ASSET_LOOKAHEAD, characters.size)) {
+                val cp = characters.getOrNull(index) ?: break
+                if (cp.assetsLoaded) continue
+                val graphics = withContext(Dispatchers.IO) { dao.getGraphics(cp.character) }
+                val parsed = withContext(Dispatchers.Default) {
+                    graphics?.rawJson?.let { raw ->
+                        runCatching {
+                            val type = object : TypeToken<Map<String, Any>>() {}.type
+                            val jsonMap: Map<String, Any> = gson.fromJson(raw, type)
+                            @Suppress("UNCHECKED_CAST")
+                            val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
+                            @Suppress("UNCHECKED_CAST")
+                            val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
+                            medians to strokes
+                        }.getOrNull()
+                    }
+                }
+                val refined = withContext(Dispatchers.Default) { refineComponentOrder(cp) }
+                val current = characters.getOrNull(index) ?: break
+                characters[index] = current.copy(
+                    medians = parsed?.first.orEmpty(),
+                    strokes = parsed?.second.orEmpty(),
+                    orderedComponents = refined.first,
+                    leafRank = refined.second,
+                    assetsLoaded = true
+                )
+            }
+        }
+    }
+
+    /** Reorders components by first stroke appearance (matches.json), keeping
+     *  the IDS document order as fallback. Runs only for windowed characters. */
+    private fun refineComponentOrder(cp: CharacterProgress): Pair<List<ComponentInfo>, Map<Int, Int>> {
+        val row = cp.charData ?: return cp.orderedComponents to cp.leafRank
+        val idsRoot = cp.idsRoot ?: return cp.orderedComponents to cp.leafRank
+        if (cp.orderedComponents.size < 2 || row.matchesJson.isBlank()) {
+            return cp.orderedComponents to cp.leafRank
+        }
+        val firstAppearance = mutableMapOf<Int, Int>()
+        try {
+            val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
+            val matches: List<List<Number>?> = gson.fromJson(row.matchesJson, matchesType)
+            matches.forEachIndexed { strokeIndex, path ->
+                if (path != null) {
+                    val leafIndex = IdsParser.resolvePath(idsRoot, path.map { it.toInt() })
+                    if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
+                        firstAppearance[leafIndex] = strokeIndex
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            DebugLog.e("PracticeVM", "matches parse failed", e)
+            return cp.orderedComponents to cp.leafRank
+        }
+        val reranked = cp.orderedComponents
+            .sortedBy { firstAppearance[it.leafIndex] ?: Int.MAX_VALUE }
+            .mapIndexed { rank, info -> info.copy(order = rank) }
+        return reranked to reranked.associate { it.leafIndex to it.order }
     }
 
     private fun alignCurrentPosition() {
@@ -204,7 +236,6 @@ class PracticeViewModel(
             isAllComplete = true
             return
         }
-
         if (practiceCharactersIndividually) {
             // Sequential mode: finish every available phase for this Hanzi before
             // moving to the next one. Characters without a structure quiz simply
@@ -213,20 +244,17 @@ class PracticeViewModel(
                 val availablePhases = characters[currentCharIndex].getPhases()
                 val nextPhaseIndex = (currentGlobalPhaseIndex..allPossiblePhases.lastIndex)
                     .firstOrNull { allPossiblePhases[it] in availablePhases }
-
                 if (nextPhaseIndex != null) {
                     currentGlobalPhaseIndex = nextPhaseIndex
+                    scheduleAssetLoad(currentCharIndex)
                     return
                 }
-
                 currentCharIndex++
                 currentGlobalPhaseIndex = 0
             }
-
             isAllComplete = true
             return
         }
-
         // Original interleaved mode: complete a phase across the whole set before
         // advancing to the next phase.
         while (
@@ -235,14 +263,12 @@ class PracticeViewModel(
         ) {
             currentCharIndex++
         }
-
         while (
             currentCharIndex >= characters.size &&
             currentGlobalPhaseIndex < allPossiblePhases.lastIndex
         ) {
             currentGlobalPhaseIndex++
             currentCharIndex = 0
-
             while (
                 currentCharIndex < characters.size &&
                 !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
@@ -250,9 +276,10 @@ class PracticeViewModel(
                 currentCharIndex++
             }
         }
-
         if (currentCharIndex >= characters.size) {
             isAllComplete = true
+        } else {
+            scheduleAssetLoad(currentCharIndex)
         }
     }
 
@@ -261,7 +288,6 @@ class PracticeViewModel(
             isAllComplete = true
             return
         }
-
         if (isAbsoluteLastStep()) {
             isAllComplete = true
             currentChar?.let {
@@ -283,18 +309,14 @@ class PracticeViewModel(
             return currentCharIndex == characters.lastIndex &&
                 phasesForCurrentCharacter.lastOrNull() == currentGlobalPhase
         }
-
         if (currentGlobalPhaseIndex != allPossiblePhases.lastIndex) return false
-
         var next = currentCharIndex + 1
-
         while (
             next < characters.size &&
             !characters[next].getPhases().contains(currentGlobalPhase)
         ) {
             next++
         }
-
         return next >= characters.size
     }
 
@@ -303,11 +325,9 @@ class PracticeViewModel(
             isAllComplete = true
             return
         }
-
         if (practiceCharactersIndividually) {
             val phasesForCurrentCharacter = currentChar?.getPhases().orEmpty()
             val currentPhasePosition = phasesForCurrentCharacter.indexOf(currentGlobalPhase)
-
             if (currentPhasePosition >= 0 && currentPhasePosition < phasesForCurrentCharacter.lastIndex) {
                 val nextPhase = phasesForCurrentCharacter[currentPhasePosition + 1]
                 currentGlobalPhaseIndex = allPossiblePhases.indexOf(nextPhase)
@@ -321,47 +341,43 @@ class PracticeViewModel(
                 val firstPhase = characters[currentCharIndex].getPhases().first()
                 currentGlobalPhaseIndex = allPossiblePhases.indexOf(firstPhase)
             }
-
             resetStrokeState()
+            scheduleAssetLoad(currentCharIndex)
             return
         }
-
         var nextIndex = currentCharIndex + 1
-
         while (
             nextIndex < characters.size &&
             !characters[nextIndex].getPhases().contains(currentGlobalPhase)
         ) {
             nextIndex++
         }
-
         if (nextIndex < characters.size) {
             currentCharIndex = nextIndex
         } else {
             if (currentGlobalPhaseIndex < allPossiblePhases.lastIndex) {
                 currentGlobalPhaseIndex++
                 currentCharIndex = 0
-
                 while (
                     currentCharIndex < characters.size &&
                     !characters[currentCharIndex].getPhases().contains(currentGlobalPhase)
                 ) {
                     currentCharIndex++
                 }
-
                 if (currentCharIndex >= characters.size) {
                     advancePhase()
+                    return
                 }
             } else {
                 isAllComplete = true
-
                 currentChar?.let {
                     ProgressStore.incrementSuccess(it.character)
                 }
+                return
             }
         }
-
         resetStrokeState()
+        scheduleAssetLoad(currentCharIndex)
     }
 
     fun selectComponent(
@@ -369,20 +385,15 @@ class PracticeViewModel(
         component: String
     ): Boolean {
         val cp = currentChar ?: return false
-
         val expectedIndex = selectedComponents.size
         if (expectedIndex >= cp.orderedComponents.size) return false
-
         if (usedOptionIds.contains(optionId)) return false
-
         return if (component == cp.orderedComponents[expectedIndex].char.toString()) {
             selectedComponents.add(component)
             usedOptionIds.add(optionId)
-
             if (selectedComponents.size == cp.orderedComponents.size) {
                 onPhaseTaskComplete()
             }
-
             true
         } else {
             totalErrors++
@@ -396,31 +407,31 @@ class PracticeViewModel(
 
     fun finishStroke(canvasSize: Float) {
         val cp = currentChar ?: return
-
+        // Assets still loading: drop the gesture instead of falsely completing
+        // the phase (an empty median list otherwise means "nothing to draw").
+        if (!cp.assetsLoaded) {
+            currentStrokePoints.clear()
+            return
+        }
         if (cp.medians.isEmpty()) {
             currentStrokePoints.clear()
             onPhaseTaskComplete()
             return
         }
-
         if (currentStrokeIndex >= cp.medians.size) return
-
         val scale = canvasSize / HanziTransform.GRID_WIDTH
         val expected = cp.medians[currentStrokeIndex].map {
             HanziTransform.toCanvas(it, scale)
         }
-
         val isCorrect = StrokeEvaluator.evaluateStroke(
             currentStrokePoints.toList(),
             expected,
             canvasSize
         )
-
         if (isCorrect) {
             completedStrokes.add(currentStrokePoints.toList())
             currentStrokePoints.clear()
             currentStrokeIndex++
-
             if (currentStrokeIndex >= cp.medians.size) {
                 onPhaseTaskComplete()
             }
@@ -437,5 +448,14 @@ class PracticeViewModel(
         completedStrokes.clear()
         selectedComponents.clear()
         usedOptionIds.clear()
+    }
+
+    override fun onCleared() {
+        assetJob?.cancel()
+        super.onCleared()
+    }
+
+    private companion object {
+        const val ASSET_LOOKAHEAD = 3
     }
 }
