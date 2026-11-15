@@ -27,7 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.room.withTransaction
+import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziDao
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
@@ -42,6 +45,8 @@ private val TOCFL_LEVELS = listOf("N1", "N2", "1", "2", "3", "4", "5")
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VocabularyListsSetting(dao: HanziDao) {
+    val context = LocalContext.current
+    val database = remember { AppDatabase.getDatabase(context) }
     val scope = rememberCoroutineScope()
     var bindings by remember { mutableStateOf<List<StudyListBinding>>(emptyList()) }
     var activeSource by remember { mutableStateOf<String?>(null) }
@@ -130,7 +135,6 @@ fun VocabularyListsSetting(dao: HanziDao) {
                 else -> "Level $level"
             }
         }
-
         AlertDialog(
             onDismissRequest = { if (!isSaving) activeSource = null },
             title = { Text("$sourceTitle levels") },
@@ -183,37 +187,40 @@ fun VocabularyListsSetting(dao: HanziDao) {
                                     .filter { it.source == source }
                                     .associateBy { it.level }
                                 val existingLists = dao.getAllLists().associateBy { it.listId }
-
                                 // Remove only lists created and tracked by this curriculum setting.
                                 (currentBindings.keys - pendingLevels).forEach { level ->
                                     val binding = currentBindings.getValue(level)
-                                    dao.deleteListItems(binding.listId)
-                                    dao.deletePracticeList(binding.listId)
-                                    dao.deleteStudyListBinding(source, level)
+                                    database.withTransaction {
+                                        dao.deleteListItems(binding.listId)
+                                        dao.deletePracticeList(binding.listId)
+                                        dao.deleteStudyListBinding(source, level)
+                                    }
                                 }
-
                                 // Repair stale bindings as well as creating newly selected levels.
                                 pendingLevels.forEach { level ->
                                     val existing = currentBindings[level]
                                     if (existing != null && existing.listId in existingLists) return@forEach
-
                                     if (existing != null) dao.deleteStudyListBinding(source, level)
                                     val listName = if (source == SOURCE_HSK) {
                                         "HSK 3.0 · ${levelName(level)}"
                                     } else {
                                         "TOCFL · ${levelName(level)}"
                                     }
-                                    val insertedId = dao.insertList(PracticeList(name = listName))
-                                    check(insertedId > 0L) { "Couldn't create '$listName'." }
-                                    val listId = insertedId.toInt()
-                                    val words = dao.getVocabularyWords(source, level).distinct()
-                                    check(words.isNotEmpty()) { "No vocabulary entries were found for ${levelName(level)}." }
-                                    words.chunked(400).forEach { chunk ->
-                                        dao.addCharactersToList(chunk.map { ListItem(listId, it) })
+                                    // One transaction per curriculum level: list row,
+                                    // all item rows and the binding commit together,
+                                    // instead of one commit per 400-row chunk.
+                                    database.withTransaction {
+                                        val insertedId = dao.insertList(PracticeList(name = listName))
+                                        check(insertedId > 0L) { "Couldn't create '$listName'." }
+                                        val listId = insertedId.toInt()
+                                        val words = dao.getVocabularyWords(source, level).distinct()
+                                        check(words.isNotEmpty()) { "No vocabulary entries were found for ${levelName(level)}." }
+                                        words.chunked(400).forEach { chunk ->
+                                            dao.addCharactersToList(chunk.map { ListItem(listId, it) })
+                                        }
+                                        dao.upsertStudyListBinding(StudyListBinding(source, level, listId))
                                     }
-                                    dao.upsertStudyListBinding(StudyListBinding(source, level, listId))
                                 }
-
                                 refreshBindings()
                                 status = "Updated $sourceTitle study lists."
                                 activeSource = null
