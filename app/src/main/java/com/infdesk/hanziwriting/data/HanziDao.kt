@@ -13,6 +13,23 @@ interface HanziDao {
     @Query("SELECT * FROM hanzi_characters WHERE character = :query OR pinyin LIKE :query OR definition LIKE :query LIMIT 50")
     suspend fun searchHanziExact(query: String): List<HanziCharacter>
 
+    /** Robust substring search used by SearchScreen. This does not depend on the
+     * optional script-conversion tables, so a missing vocabulary metadata import
+     * can never suppress ordinary Hanzi/pinyin/English results. Tone digits are
+     * ignored for pinyin matching, allowing both ni3 and ni to match. */
+    @Query("""
+        SELECT * FROM hanzi_characters
+        WHERE character LIKE '%' || :query || '%'
+           OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(pinyin), '1', ''), '2', ''), '3', ''), '4', ''), '5', '')
+              LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '1', ''), '2', ''), '3', ''), '4', ''), '5', '') || '%'
+           OR LOWER(definition) LIKE '%' || LOWER(:query) || '%'
+        ORDER BY CASE WHEN character = :query THEN 0 ELSE 1 END,
+                 CASE WHEN LOWER(pinyin) = LOWER(:query) THEN 0 ELSE 1 END,
+                 character
+        LIMIT 50
+    """)
+    suspend fun searchHanziForSearch(query: String): List<HanziCharacter>
+
     @Query("SELECT * FROM hanzi_characters WHERE character = :character LIMIT 1")
     suspend fun getCharacterExact(character: String): HanziCharacter?
 
@@ -54,6 +71,16 @@ interface HanziDao {
 
     @Query("SELECT character FROM list_items WHERE listId = :listId")
     suspend fun getCharactersInList(listId: Int): List<String>
+
+    // rowid preserves the order in which curriculum/list entries were inserted.
+    @Query("SELECT character FROM list_items WHERE listId = :listId ORDER BY rowid ASC")
+    suspend fun getCharactersInListInInsertionOrder(listId: Int): List<String>
+
+    @Query("SELECT COUNT(*) FROM list_items WHERE listId = :listId")
+    suspend fun getListItemCount(listId: Int): Int
+
+    @Query("SELECT character FROM list_items WHERE listId = :listId ORDER BY character LIMIT :limit OFFSET :offset")
+    suspend fun getCharactersInListPage(listId: Int, limit: Int, offset: Int): List<String>
 
     // Used by AddToListDialog to show which practice lists already contain an item.
     @Query("SELECT listId FROM list_items WHERE character = :character ORDER BY listId")
