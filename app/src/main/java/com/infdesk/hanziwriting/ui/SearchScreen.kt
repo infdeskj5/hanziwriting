@@ -32,8 +32,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 private fun isCjkSearchCharacter(char: Char): Boolean =
-    char in '\u3400'..'\u4DBF' || char in '\u4E00'..'\u9FFF' ||
-        char in '\uF900'..'\uFAFF'
+    char in '㐀'..'䶿' || char in '一'..'鿿' ||
+        char in '豈'..'﫿'
 
 private data class SearchOutcome(
     val results: List<HanziCharacter>,
@@ -118,12 +118,10 @@ fun SearchScreen(
         searchErrorMessage = null
         var finished = false
         var markQueryCompleted = false
-
         try {
             // Debounce rapid typing, but keep the wait short.
             delay(140L)
             val query = requestedQuery.trim()
-
             val outcome = withTimeoutOrNull(20_000L) {
                 if (query.all(::isCjkSearchCharacter)) {
                     // Chinese-character searches should use the primary-key index,
@@ -136,10 +134,8 @@ fun SearchScreen(
                     } catch (_: Exception) {
                         emptyList()
                     }
-
                     val queryForms = (listOf(query) + convertedForms).distinct()
                     val matches = LinkedHashMap<String, HanziCharacter>()
-
                     for (form in queryForms) {
                         dao.getCharacterExact(form)?.let { matches[it.character] = it }
                         if (form.length > 1) {
@@ -150,7 +146,6 @@ fun SearchScreen(
                             }
                         }
                     }
-
                     // Preserve the former substring-search behavior as a fallback
                     // only when no exact word or component exists.
                     if (matches.isEmpty()) {
@@ -160,7 +155,6 @@ fun SearchScreen(
                             }
                         }
                     }
-
                     val ordered = matches.values
                         .sortedBy { it.character !in queryForms }
                     SearchOutcome(
@@ -187,9 +181,15 @@ fun SearchScreen(
                 onResultsChange(outcome.results)
                 markQueryCompleted = true
             }
-
             finished = true
-            resultsListState.scrollToItem(0)
+            // FIX: use the non-suspending requestScrollToItem instead of
+            // scrollToItem(0). scrollToItem suspends until the LazyListState is
+            // attached to a composed LazyColumn, but while searchInProgress is
+            // true the list is not composed, and it is only cleared in `finally`
+            // after this call returns -> deadlock ("Searching…" forever).
+            // requestScrollToItem records the request and applies it as soon as
+            // the list appears; it is also safe for empty/error result states.
+            resultsListState.requestScrollToItem(0)
         } catch (cancelled: CancellationException) {
             // A newer query or navigation cancelled this one. Do not mark it
             // completed; the active query's own effect will update the screen.
@@ -236,7 +236,6 @@ fun SearchScreen(
     }
 
     val isSearching = searchInProgress
-
     // reverseLayout keeps the highest-priority result (index zero) anchored at
     // the bottom edge for both short and long result sets.
     val visualResults = searchResults
@@ -287,7 +286,6 @@ fun SearchScreen(
                         )
                     }
                 }
-
                 searchQuery.isBlank() -> {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -296,7 +294,6 @@ fun SearchScreen(
                         StrokeRulesCarousel(modifier = Modifier.fillMaxWidth())
                     }
                 }
-
                 searchErrorMessage != null -> {
                     Column(
                         modifier = Modifier.fillMaxSize(),
@@ -314,7 +311,6 @@ fun SearchScreen(
                         }
                     }
                 }
-
                 searchResults.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
@@ -325,7 +321,6 @@ fun SearchScreen(
                         )
                     }
                 }
-
                 else -> {
                     LazyColumn(
                         state = resultsListState,
@@ -425,7 +420,6 @@ fun HanziResultItem(
                     }
                 }
             }
-
             Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
