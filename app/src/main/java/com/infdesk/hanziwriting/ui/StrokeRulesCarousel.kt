@@ -10,7 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -149,17 +149,19 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
     }
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().height(360.dp),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
+        // The header, content viewport, divider, and navigation row have fixed
+        // layout slots. Text length therefore cannot move the bottom page cursor.
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(30.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -182,28 +184,38 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    Text(rule.title, style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        rule.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         rule.description,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         rule.note,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
                 Column(
+                    modifier = Modifier.width(104.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -216,12 +228,10 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
                             loop = true,
                             showGuide = false,
                             useSvgFill = true,
-                            frameDelayMs = 16,
+                            frameDelayMs = 33,
                             onComplete = {}
                         )
                     } else {
-                        // Keep the example area visually quiet until its SVG is ready.
-                        // Do not flash the complete glyph before the stroke animation starts.
                         Spacer(modifier = Modifier.size(100.dp))
                     }
                     Text(
@@ -232,32 +242,45 @@ fun StrokeRulesCarousel(modifier: Modifier = Modifier) {
                 }
             }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+            HorizontalDivider(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+            )
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 FilledTonalIconButton(
-                    onClick = { selectedIndex = (selectedIndex - 1 + strokeRules.size) % strokeRules.size }
+                    onClick = {
+                        selectedIndex = (selectedIndex - 1 + strokeRules.size) % strokeRules.size
+                    },
+                    modifier = Modifier.size(44.dp)
                 ) {
                     Icon(Icons.Default.ChevronLeft, contentDescription = "Previous stroke rule")
                 }
-                Spacer(modifier = Modifier.weight(1f))
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    strokeRules.indices.forEach { index ->
-                        val active = index == selectedIndex
-                        Surface(
-                            modifier = Modifier.size(if (active) 8.dp else 6.dp),
-                            shape = RoundedCornerShape(50),
-                            color = if (active) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant
-                        ) {}
+
+                // Fixed-width centre slot keeps all 14 dots centred between arrows.
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        strokeRules.indices.forEach { index ->
+                            val active = index == selectedIndex
+                            Surface(
+                                modifier = Modifier.size(if (active) 8.dp else 6.dp),
+                                shape = RoundedCornerShape(50),
+                                color = if (active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant
+                            ) {}
+                        }
                     }
                 }
-                Spacer(modifier = Modifier.weight(1f))
+
                 FilledTonalIconButton(
-                    onClick = { selectedIndex = (selectedIndex + 1) % strokeRules.size }
+                    onClick = { selectedIndex = (selectedIndex + 1) % strokeRules.size },
+                    modifier = Modifier.size(44.dp)
                 ) {
                     Icon(Icons.Default.ChevronRight, contentDescription = "Next stroke rule")
                 }
