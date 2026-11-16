@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,7 +30,6 @@ import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.Diagnostics
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withFrameNanos
 
 @Composable
 fun ListContentsScreen(
@@ -58,9 +58,6 @@ fun ListContentsScreen(
         onDispose { DebugLog.d("Probe", "ListContents left composition list=$listId") }
     }
 
-    // The list contains at most a few thousand short strings. Loading this small
-    // projection once is cheaper and smoother than fetching another OFFSET page
-    // during a fast scroll. LazyColumn still composes only visible rows.
     LaunchedEffect(listId) {
         val openSeq = Diagnostics.openSequence(listId)
         val sinceTap = Diagnostics.sinceMark("listTap:$listId")
