@@ -196,17 +196,16 @@ fun PracticeScreen(
         }
         Spacer(modifier = Modifier.height(16.dp))
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            // Build correct options AND distractors inside remember: computing
-            // shuffled distractors on every recomposition wasted work and could
-            // reshuffle the visible quiz mid-interaction.
+            // Build correct options AND distractors inside remember so the visible
+            // quiz cannot reshuffle mid-interaction on unrelated recompositions.
             val options = remember(currentChar.character, currentChar.orderedComponents) {
                 val correct = currentChar.orderedComponents.mapIndexed { index, component ->
                     QuizOption(id = index, label = component.char.toString())
                 }
                 val correctLabels = correct.map { it.label }.toSet()
                 val distractors = listOf(
-                    "氵", "木", "口", "扌", "忄", "", "辶", "阝",
-                    "刂", "日", "月", "女", "心", "人", "大", "小"
+                    "氵", "木", "口", "扌", "", "艹", "", "阝",
+            "刂", "日", "月", "女", "心", "人", "大", "小"
                 ).filter { it !in correctLabels }
                     .shuffled()
                     .take(4)
