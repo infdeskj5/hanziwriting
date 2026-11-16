@@ -24,6 +24,10 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.AppState
+import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.Diagnostics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class Screen(val title: String, val icon: ImageVector) {
     Search("Search", Icons.Default.Search),
@@ -120,6 +124,10 @@ fun HanziWritingApp() {
     }
 
     LaunchedEffect(Unit) {
+        Diagnostics.start(context)
+        runCatching {
+            withContext(Dispatchers.IO) { Diagnostics.dbReport(context) }
+        }.onSuccess { DebugLog.d("DB", it) }
         runCatching { listDao.getAllLists() }
             .onSuccess { cachedLists = applySavedListOrder(it) }
     }
@@ -129,11 +137,9 @@ fun HanziWritingApp() {
     var practiceCharacter by remember { mutableStateOf<String?>(null) }
     var practiceListId by remember { mutableStateOf<Int?>(null) }
     var listContentsId by remember { mutableStateOf<Int?>(null) }
-
     // Keep selected entries when returning from custom practice to list contents.
     var selectedListItems by remember { mutableStateOf<Set<String>>(emptySet()) }
     var customPracticeItems by remember { mutableStateOf<List<String>?>(null) }
-
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<HanziCharacter>>(emptyList()) }
     // Search state lives above SearchScreen so opening Word Details does not discard
@@ -142,7 +148,6 @@ fun HanziWritingApp() {
     val searchResultsListState = rememberLazyListState()
     // Keep Lists scroll position alive while List Contents is displayed.
     val listsLazyListState = rememberLazyListState()
-
     val currentWord = wordBackStack.lastOrNull()
     val displayState = when {
         customPracticeItems != null -> "CustomListPractice"
@@ -154,24 +159,20 @@ fun HanziWritingApp() {
         listContentsId != null -> "ListContents"
         else -> currentScreen.name
     }
-
     var previousDisplayState by remember { mutableStateOf<String?>(null) }
-
     LaunchedEffect(displayState) {
+        DebugLog.d("Route", "display=$displayState")
         // List Contents cannot create/delete a list, so returning from it should reuse
         // the existing snapshot and LazyColumn state without a database refresh.
         // Other routes may create lists, so refresh when returning from those routes.
         val returningFromListContents =
             displayState == "Lists" && previousDisplayState == "ListContents"
-
         if (displayState == "Lists" && !returningFromListContents) {
             runCatching { listDao.getAllLists() }
                 .onSuccess { cachedLists = applySavedListOrder(it) }
         }
-
         previousDisplayState = displayState
     }
-
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -181,7 +182,6 @@ fun HanziWritingApp() {
             // List Contents.
             val showBottomNavigation =
                 displayState == "Search" || displayState == "Lists" || displayState == "Settings"
-
             NavigationBar(
                 modifier = Modifier
                     .alpha(if (showBottomNavigation) 1f else 0f)
@@ -231,7 +231,6 @@ fun HanziWritingApp() {
                 WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             }
         )
-
         // Deliberately switch pages directly instead of Crossfade. Crossfade keeps
         // both pages composed for its duration; WordPage contains looping stroke
         // animations, so that doubles rendering work during navigation and caused
@@ -248,30 +247,31 @@ fun HanziWritingApp() {
                     resultsListState = searchResultsListState,
                     onWordClick = { wordBackStack = listOf(it) }
                 )
-
                 "WordPage" -> WordPage(
                     word = currentWord.orEmpty(),
                     onBackClick = { wordBackStack = wordBackStack.dropLast(1) },
                     onComponentClick = { comp -> wordBackStack = wordBackStack + comp },
                     onPracticeClick = { practiceCharacter = it }
                 )
-
                 "Practice" -> PracticeScreen(
                     wordToPractice = practiceCharacter,
                     onBackClick = { practiceCharacter = null }
                 )
-
                 "Lists" -> ListsScreen(
                     cachedLists = cachedLists,
                     listState = listsLazyListState,
                     onListsChanged = { cachedLists = it },
-                    onPracticeListClick = { practiceListId = it },
+                    onPracticeListClick = {
+                        Diagnostics.mark("practiceTap:$it")
+                        practiceListId = it
+                    },
                     onListContentsClick = {
+                        Diagnostics.mark("listTap:$it")
+                        Diagnostics.openSequence(it)
                         selectedListItems = emptySet()
                         listContentsId = it
                     }
                 )
-
                 "ListContents" -> {
                     val activeListId = listContentsId
                     if (activeListId != null) {
@@ -285,23 +285,19 @@ fun HanziWritingApp() {
                             },
                             onWordClick = { item -> wordBackStack = listOf(item) },
                             onPracticeItemClick = { item -> practiceCharacter = item },
-                            onPracticeSelectedClick = { selected -> customPracticeItems = selected }
+                            onPracticeSelectedClick = { selected ->
+                                Diagnostics.mark("customPracticeTap:${selected.size}")
+                                customPracticeItems = selected
+                            }
                         )
                     } else {
                         Spacer(Modifier.fillMaxSize())
                     }
                 }
-
-                "CustomListPractice" -> {
-                    val practiceText = remember(customPracticeItems) {
-                        customPracticeItems.orEmpty().joinToString("")
-                    }
-                    PracticeScreen(
-                        wordToPractice = practiceText,
-                        onBackClick = { customPracticeItems = null }
-                    )
-                }
-
+                "CustomListPractice" -> PracticeScreen(
+                    wordToPractice = customPracticeItems.orEmpty().joinToString(""),
+                    onBackClick = { customPracticeItems = null }
+                )
                 "ListPractice" -> {
                     val activeListId = practiceListId
                     if (activeListId != null) {
@@ -313,7 +309,6 @@ fun HanziWritingApp() {
                         Spacer(Modifier.fillMaxSize())
                     }
                 }
-
                 "Settings" -> SettingsScreen()
                 else -> SearchScreen(
                     searchQuery = searchQuery,
