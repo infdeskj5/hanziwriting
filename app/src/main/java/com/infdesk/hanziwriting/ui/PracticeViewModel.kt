@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -13,16 +14,13 @@ import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
 import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.Diagnostics
 import com.infdesk.hanziwriting.utils.HanziTransform
 import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 enum class PracticePhase {
     ANIMATION,
@@ -45,12 +43,7 @@ data class CharacterProgress(
     val strokes: List<String> = emptyList(),
     val orderedComponents: List<ComponentInfo> = emptyList(),
     val idsRoot: IdsNode? = null,
-    val leafRank: Map<Int, Int> = emptyMap(),
-    // Tier 1 done: dictionary row + IDS tree + component count known, so phase
-    // planning is valid even before stroke assets arrive.
-    val planned: Boolean = false,
-    // Tier 2 done: stroke graphics parsed and component order refined.
-    val assetsLoaded: Boolean = false
+    val leafRank: Map<Int, Int> = emptyMap()
 ) {
     fun getPhases(): List<PracticePhase> {
         val list = mutableListOf(
@@ -100,147 +93,112 @@ class PracticeViewModel(
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
     val usedOptionIds = mutableStateListOf<Int>()
-
     private val gson = Gson()
-    private var loadJob: Job? = null
-    private var assetJob: Job? = null
+
+    init {
+        Diagnostics.vm.incrementAndGet()
+        DebugLog.d("Probe", "PracticeViewModel created (vm=${Diagnostics.vm.get()})")
+    }
+
+    override fun onCleared() {
+        Diagnostics.vm.decrementAndGet()
+        DebugLog.d("Probe", "PracticeViewModel onCleared (vm=${Diagnostics.vm.get()})")
+        super.onCleared()
+    }
 
     fun loadCharacters(input: String) {
-        loadJob?.cancel()
-        assetJob?.cancel()
         characters.clear()
         resetStrokeState()
         isAllComplete = false
         waitingForNext = false
         currentGlobalPhaseIndex = 0
         currentCharIndex = 0
-        // Practice each distinct character once. Curriculum lists repeat glyphs
-        // hundreds of times; the old loader queried and Gson-parsed graphics for
-        // EVERY occurrence on the main thread, which froze the app for tens of
-        // seconds on HSK/TOCFL-sized sets.
-        val distinctCharacters = input.toList().map { it.toString() }.distinct()
-        distinctCharacters.forEach { characters.add(CharacterProgress(character = it)) }
+        input.forEach {
+            characters.add(CharacterProgress(character = it.toString()))
+        }
+        DebugLog.d(
+            "PracticeLoad",
+            "start chars=${characters.size} distinct=${input.toList().distinct().size}"
+        )
         if (characters.isEmpty()) {
             isAllComplete = true
             return
         }
-        loadJob = viewModelScope.launch {
-            // Tier 1 (planning): batched dictionary rows + cheap IDS parsing,
-            // entirely off the main thread. No graphics JSON is touched here.
-            val rowsByCharacter: Map<String, HanziCharacter> = withContext(Dispatchers.Default) {
-                val dao = database.hanziDao()
-                val rows = HashMap<String, HanziCharacter>(distinctCharacters.size * 2)
-                distinctCharacters.chunked(300).forEach { chunk ->
-                    dao.getCharactersBatch(chunk).forEach { rows[it.character] = it }
-                }
-                rows
-            }
-            val planned = withContext(Dispatchers.Default) {
-                characters.toList().map { cp ->
-                    val row = rowsByCharacter[cp.character]
-                    if (row == null) {
-                        cp.copy(planned = true, assetsLoaded = true)
-                    } else {
-                        val idsRoot = IdsParser.parse(row.decomposition)
+        Diagnostics.vmJobs.incrementAndGet()
+        val t0 = SystemClock.elapsedRealtime()
+        viewModelScope.launch {
+            try {
+                characters.forEachIndexed { index, cp ->
+                    val charData = database.hanziDao().getCharacterExact(cp.character)
+                    val graphicsData = database.hanziDao().getGraphics(cp.character)
+                    if (charData != null && graphicsData != null) {
+                        val type = object : TypeToken<Map<String, Any>>() {}.type
+                        val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
+                        @Suppress("UNCHECKED_CAST")
+                        val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
+                        @Suppress("UNCHECKED_CAST")
+                        val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
+                        val idsRoot = IdsParser.parse(charData.decomposition)
                         val leaves = IdsParser.getLeavesWithIndex(idsRoot)
-                        val ordered = leaves.mapIndexed { rank, leaf ->
-                            ComponentInfo(char = leaf.char, leafIndex = leaf.index, order = rank)
+                        val orderedComponents = mutableListOf<ComponentInfo>()
+                        val leafRank = mutableMapOf<Int, Int>()
+                        val firstAppearance = mutableMapOf<Int, Int>()
+                        if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
+                            try {
+                                val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
+                                val matches: List<List<Number>?> =
+                                    gson.fromJson(charData.matchesJson, matchesType)
+                                matches.forEachIndexed { strokeIndex, path ->
+                                    if (path != null) {
+                                        val intPath = path.map { it.toInt() }
+                                        val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
+                                        if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
+                                            firstAppearance[leafIndex] = strokeIndex
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                DebugLog.e("PracticeVM", "matches parse failed", e)
+                            }
                         }
-                        cp.copy(
-                            charData = row,
-                            orderedComponents = ordered,
+                        val sortedLeaves = leaves.sortedBy {
+                            firstAppearance[it.index] ?: Int.MAX_VALUE
+                        }
+                        sortedLeaves.forEachIndexed { rank, leaf ->
+                            orderedComponents.add(
+                                ComponentInfo(
+                                    char = leaf.char,
+                                    leafIndex = leaf.index,
+                                    order = rank
+                                )
+                            )
+                            leafRank[leaf.index] = rank
+                        }
+                        characters[index] = cp.copy(
+                            charData = charData,
+                            medians = medians,
+                            strokes = strokes,
+                            orderedComponents = orderedComponents,
                             idsRoot = idsRoot,
-                            leafRank = ordered.associate { it.leafIndex to it.order },
-                            planned = true
+                            leafRank = leafRank
+                        )
+                    }
+                    if (index > 0 && index % 250 == 0) {
+                        DebugLog.d(
+                            "PracticeLoad",
+                            "progress index=$index elapsedMs=${SystemClock.elapsedRealtime() - t0}"
                         )
                     }
                 }
-            }
-            characters.clear()
-            characters.addAll(planned)
-            alignCurrentPosition()
-        }
-    }
-
-    /**
-     * Tier 2 (assets): heavy stroke graphics JSON + writing-order refinement for
-     * the current character plus a small lookahead only. Everything else stays
-     * unparsed until (and unless) it becomes current.
-     */
-    private fun scheduleAssetLoad(fromIndex: Int) {
-        if (isAllComplete || characters.isEmpty()) return
-        assetJob?.cancel()
-        val startIndex = fromIndex.coerceIn(0, characters.lastIndex)
-        assetJob = viewModelScope.launch {
-            val dao = database.hanziDao()
-            for (index in startIndex until minOf(startIndex + ASSET_LOOKAHEAD, characters.size)) {
-                val cp = characters.getOrNull(index) ?: break
-                if (cp.assetsLoaded) continue
-                val graphics = withContext(Dispatchers.IO) { dao.getGraphics(cp.character) }
-                val parsed = withContext(Dispatchers.Default) {
-                    parseGraphics(cp.character, graphics?.rawJson)
-                }
-                val refined = withContext(Dispatchers.Default) { refineComponentOrder(cp) }
-                val current = characters.getOrNull(index) ?: break
-                characters[index] = current.copy(
-                    medians = parsed?.first.orEmpty(),
-                    strokes = parsed?.second.orEmpty(),
-                    orderedComponents = refined.first,
-                    leafRank = refined.second,
-                    assetsLoaded = true
+                alignCurrentPosition()
+                DebugLog.d(
+                    "PracticeLoad",
+                    "done chars=${characters.size} elapsedMs=${SystemClock.elapsedRealtime() - t0}"
                 )
+            } finally {
+                Diagnostics.vmJobs.decrementAndGet()
             }
         }
-    }
-
-    private fun parseGraphics(
-        character: String,
-        rawJson: String?
-    ): Pair<List<List<List<Double>>>, List<String>>? {
-        if (rawJson.isNullOrBlank()) return null
-        return runCatching {
-            val type = object : TypeToken<Map<String, Any>>() {}.type
-            val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
-            @Suppress("UNCHECKED_CAST")
-            val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
-            @Suppress("UNCHECKED_CAST")
-            val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
-            medians to strokes
-        }.onFailure {
-            DebugLog.e("PracticeVM", "graphics parse failed for $character", it)
-        }.getOrNull()
-    }
-
-    /** Reorders components by first stroke appearance (matches.json), keeping
-     *  IDS document order as fallback. Runs only for windowed characters. */
-    private fun refineComponentOrder(
-        cp: CharacterProgress
-    ): Pair<List<ComponentInfo>, Map<Int, Int>> {
-        val row = cp.charData ?: return cp.orderedComponents to cp.leafRank
-        val idsRoot = cp.idsRoot ?: return cp.orderedComponents to cp.leafRank
-        if (cp.orderedComponents.size < 2 || row.matchesJson.isBlank()) {
-            return cp.orderedComponents to cp.leafRank
-        }
-        val firstAppearance = mutableMapOf<Int, Int>()
-        try {
-            val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
-            val matches: List<List<Number>?> = gson.fromJson(row.matchesJson, matchesType)
-            matches.forEachIndexed { strokeIndex, path ->
-                if (path != null) {
-                    val leafIndex = IdsParser.resolvePath(idsRoot, path.map { it.toInt() })
-                    if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
-                        firstAppearance[leafIndex] = strokeIndex
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            DebugLog.e("PracticeVM", "matches parse failed", e)
-            return cp.orderedComponents to cp.leafRank
-        }
-        val reranked = cp.orderedComponents
-            .sortedBy { firstAppearance[it.leafIndex] ?: Int.MAX_VALUE }
-            .mapIndexed { rank, info -> info.copy(order = rank) }
-        return reranked to reranked.associate { it.leafIndex to it.order }
     }
 
     private fun alignCurrentPosition() {
@@ -258,7 +216,6 @@ class PracticeViewModel(
                     .firstOrNull { allPossiblePhases[it] in availablePhases }
                 if (nextPhaseIndex != null) {
                     currentGlobalPhaseIndex = nextPhaseIndex
-                    scheduleAssetLoad(currentCharIndex)
                     return
                 }
                 currentCharIndex++
@@ -290,8 +247,6 @@ class PracticeViewModel(
         }
         if (currentCharIndex >= characters.size) {
             isAllComplete = true
-        } else {
-            scheduleAssetLoad(currentCharIndex)
         }
     }
 
@@ -354,7 +309,6 @@ class PracticeViewModel(
                 currentGlobalPhaseIndex = allPossiblePhases.indexOf(firstPhase)
             }
             resetStrokeState()
-            scheduleAssetLoad(currentCharIndex)
             return
         }
         var nextIndex = currentCharIndex + 1
@@ -378,18 +332,15 @@ class PracticeViewModel(
                 }
                 if (currentCharIndex >= characters.size) {
                     advancePhase()
-                    return
                 }
             } else {
                 isAllComplete = true
                 currentChar?.let {
                     ProgressStore.incrementSuccess(it.character)
                 }
-                return
             }
         }
         resetStrokeState()
-        scheduleAssetLoad(currentCharIndex)
     }
 
     fun selectComponent(
@@ -419,12 +370,6 @@ class PracticeViewModel(
 
     fun finishStroke(canvasSize: Float) {
         val cp = currentChar ?: return
-        // Assets still loading: drop the gesture instead of falsely completing
-        // the phase (an empty median list otherwise means "nothing to draw").
-        if (!cp.assetsLoaded) {
-            currentStrokePoints.clear()
-            return
-        }
         if (cp.medians.isEmpty()) {
             currentStrokePoints.clear()
             onPhaseTaskComplete()
@@ -460,24 +405,5 @@ class PracticeViewModel(
         completedStrokes.clear()
         selectedComponents.clear()
         usedOptionIds.clear()
-    }
-
-    /** PracticeScreen creates this view model with remember(), so a ViewModelStore
-     *  never calls onCleared(). The screen MUST call dispose() when it leaves
-     *  composition; otherwise abandoned sessions keep loading forever and make
-     *  the entire app (including List Contents) slow and unstable. */
-    fun dispose() {
-        loadJob?.cancel()
-        assetJob?.cancel()
-        viewModelScope.cancel()
-    }
-
-    override fun onCleared() {
-        dispose()
-        super.onCleared()
-    }
-
-    private companion object {
-        const val ASSET_LOOKAHEAD = 3
     }
 }
