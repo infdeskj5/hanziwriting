@@ -1,6 +1,7 @@
 package com.infdesk.hanziwriting.ui
 
 import android.content.Context
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -26,9 +27,8 @@ import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.HanziCharacter
+import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.PinyinUtils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private data class StrokeAnimationData(
     val medians: List<List<List<Double>>>,
@@ -46,28 +46,6 @@ private fun parseStrokeAnimationData(rawJson: String): StrokeAnimationData? = ru
         ?: emptyList()
     StrokeAnimationData(medians, strokes).takeIf { it.medians.isNotEmpty() }
 }.getOrNull()
-
-/**
- * Parsed stroke data is expensive (Gson over tens of KB per glyph) and WordPage
- * tiles re-enter composition while scrolling/navigating. A small LRU keeps the
- * main thread free of repeated parses.
- */
-private object StrokeAnimationCache {
-    private const val MAX_ENTRIES = 96
-    private val entries = object : LinkedHashMap<String, StrokeAnimationData?>(32, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StrokeAnimationData?>) =
-            size > MAX_ENTRIES
-    }
-
-    @Synchronized
-    fun read(character: String): Pair<Boolean, StrokeAnimationData?> =
-        if (entries.containsKey(character)) true to entries[character] else false to null
-
-    @Synchronized
-    fun write(character: String, data: StrokeAnimationData?) {
-        entries[character] = data
-    }
-}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -124,12 +102,11 @@ fun WordPage(
         // the prebuilt form-pair table, but the form the user opened remains visible.
         val loadedCharacter = dao.getCharacterExact(canonicalWord) ?: dao.getCharacterExact(word)
         charData = loadedCharacter
-        // Ideographic Description Characters (U+2FF0 to U+2FFB). Using unicode escapes
-        // prevents text-generation or copy-paste artifacts from turning them into
-        // empty character literals (''), which breaks the Kotlin compiler.
+        // Ideographic Description Characters U+2FF0..U+2FFB, written as escapes so
+        // copy/paste pipelines can never turn them into empty character literals.
         val idsSymbols = setOf(
-            '\u2FF0', '\u2FF1', '\u2FF2', '\u2FF3', '\u2FF4', '\u2FF5',
-            '\u2FF6', '\u2FF7', '\u2FF8', '\u2FF9', '\u2FFA', '\u2FFB',
+            '⿰', '⿱', '⿲', '⿳', '⿴', '⿵',
+            '⿶', '⿷', '⿸', '⿹', '⿺', '⿻',
             '？', ' '
         )
         components = loadedCharacter?.decomposition
@@ -359,17 +336,17 @@ private fun StrokeAnimationTile(
     var loaded by remember(character) { mutableStateOf(false) }
 
     LaunchedEffect(character) {
-        // Parse off the main thread and reuse cached results: LaunchedEffect runs
-        // on Dispatchers.Main, and Gson over stroke JSON was janking WordPage.
-        val (cached, value) = StrokeAnimationCache.read(character)
-        if (cached) {
-            animationData = value
-        } else {
-            val raw = withContext(Dispatchers.IO) { dao.getGraphics(character)?.rawJson }
-            val parsed = raw?.let { withContext(Dispatchers.Default) { parseStrokeAnimationData(it) } }
-            StrokeAnimationCache.write(character, parsed)
-            animationData = parsed
-        }
+        // Measurement: this runs on Dispatchers.Main; log query vs parse cost and
+        // the thread name so the report shows any main-thread Gson work.
+        val t0 = SystemClock.uptimeMillis()
+        val raw = dao.getGraphics(character)?.rawJson
+        val tQ = SystemClock.uptimeMillis()
+        animationData = raw?.let(::parseStrokeAnimationData)
+        DebugLog.d(
+            "WordPageParse",
+            "char=$character queryMs=${tQ - t0} parseMs=${SystemClock.uptimeMillis() - tQ} " +
+                "thread=${Thread.currentThread().name}"
+        )
         loaded = true
     }
 
