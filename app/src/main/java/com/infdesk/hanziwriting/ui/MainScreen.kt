@@ -292,10 +292,15 @@ fun HanziWritingApp() {
                     }
                 }
 
-                "CustomListPractice" -> PracticeScreen(
-                    wordToPractice = customPracticeItems.orEmpty().joinToString(""),
-                    onBackClick = { customPracticeItems = null }
-                )
+                "CustomListPractice" -> {
+                    val practiceText = remember(customPracticeItems) {
+                        customPracticeItems.orEmpty().joinToString("")
+                    }
+                    PracticeScreen(
+                        wordToPractice = practiceText,
+                        onBackClick = { customPracticeItems = null }
+                    )
+                }
 
                 "ListPractice" -> {
                     val activeListId = practiceListId
