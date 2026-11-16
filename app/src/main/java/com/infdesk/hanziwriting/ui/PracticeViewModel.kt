@@ -20,7 +20,10 @@ import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class PracticePhase {
     ANIMATION,
@@ -94,15 +97,28 @@ class PracticeViewModel(
     val selectedComponents = mutableStateListOf<String>()
     val usedOptionIds = mutableStateListOf<Int>()
     private val gson = Gson()
+    private var loadJob: Job? = null
+    private val disposed = AtomicBoolean(false)
 
     init {
         Diagnostics.vm.incrementAndGet()
         DebugLog.d("Probe", "PracticeViewModel created (vm=${Diagnostics.vm.get()})")
     }
 
+    /** Called by PracticeScreen's DisposableEffect. This VM is created with
+     *  remember(), so a ViewModelStore never calls onCleared(); without this the
+     *  load coroutine would keep running after the screen is gone. */
+    fun dispose() {
+        if (disposed.compareAndSet(false, true)) {
+            Diagnostics.vm.decrementAndGet()
+            loadJob?.cancel()
+            viewModelScope.cancel()
+            DebugLog.d("Probe", "PracticeViewModel disposed (vm=${Diagnostics.vm.get()})")
+        }
+    }
+
     override fun onCleared() {
-        Diagnostics.vm.decrementAndGet()
-        DebugLog.d("Probe", "PracticeViewModel onCleared (vm=${Diagnostics.vm.get()})")
+        dispose()
         super.onCleared()
     }
 
@@ -126,7 +142,7 @@ class PracticeViewModel(
         }
         Diagnostics.vmJobs.incrementAndGet()
         val t0 = SystemClock.elapsedRealtime()
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             try {
                 characters.forEachIndexed { index, cp ->
                     val charData = database.hanziDao().getCharacterExact(cp.character)
