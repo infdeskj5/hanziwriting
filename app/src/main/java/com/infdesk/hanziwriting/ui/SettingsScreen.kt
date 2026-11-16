@@ -18,16 +18,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import androidx.room.withTransaction
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.infdesk.hanziwriting.BuildConfig
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.CrashHandler
 import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.Diagnostics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,8 +43,7 @@ private const val LIST_BACKUP_VERSION = 1
 fun SettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val database = remember { AppDatabase.getDatabase(context) }
-    val dao = remember { database.hanziDao() }
+    val dao = remember { AppDatabase.getDatabase(context).hanziDao() }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     val practicePreferences = remember {
@@ -166,22 +166,12 @@ fun SettingsScreen() {
                                 ?.filter { it.isNotEmpty() }
                                 ?.distinct()
                                 .orEmpty()
-                            // One transaction per list with chunked batch inserts.
-                            // The previous per-character insert loop meant one
-                            // commit per row, which took minutes on large backups.
-                            val toInsert = characters.filterNot { it in alreadyPresent }
-                            if (toInsert.isNotEmpty()) {
-                                database.withTransaction {
-                                    toInsert.chunked(400).forEach { chunk ->
-                                        dao.addCharactersToList(
-                                            chunk.map { character ->
-                                                ListItem(listId = targetListId, character = character)
-                                            }
-                                        )
-                                    }
-                                }
+                            characters.forEach { character ->
+                                dao.addCharacterToList(
+                                    ListItem(listId = targetListId, character = character)
+                                )
+                                if (character !in alreadyPresent) newItems++
                             }
-                            newItems += toInsert.size
                             listsProcessed++
                         }
                         // Preserve the backup's bottom-to-top order, then retain any
@@ -226,8 +216,13 @@ fun SettingsScreen() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "Hanzi Writing · v1.0",
+            "Hanzi Writing · v1.0 · build ${BuildConfig.BUILD_ID}",
             style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.outline
+        )
+        Text(
+            Diagnostics.installSummary(context),
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -281,6 +276,8 @@ fun SettingsScreen() {
                     statusMessage = null
                     try {
                         val report = withContext(Dispatchers.IO) {
+                            // Make sure every queued log line is on disk first.
+                            DebugLog.flushSync()
                             val sb = StringBuilder()
                             sb.append("=== HANZI WRITING DEBUG LOG ===\n")
                             DebugLog.getLogFile()?.let { file ->
@@ -292,6 +289,8 @@ fun SettingsScreen() {
                             else crashLogs.forEach { file ->
                                 sb.append(file.readText()).append("\n---\n")
                             }
+                            sb.append("\n=== LIVE DIAGNOSTICS ===\n")
+                            sb.append(Diagnostics.fullReport(context))
                             File(context.cacheDir, "hanzi_report.txt").apply {
                                 writeText(sb.toString())
                             }
