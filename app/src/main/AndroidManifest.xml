@@ -12,7 +12,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HanziWriting"
         tools:targetApi="34">
-        
+
+        <!-- Allows Perfetto/system tracing of this non-debuggable bench build. -->
+        <profileable
+            android:shell="true"
+            tools:targetApi="29" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -33,7 +38,5 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        
     </application>
-
 </manifest>
