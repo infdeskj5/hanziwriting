@@ -124,9 +124,13 @@ fun WordPage(
         // the prebuilt form-pair table, but the form the user opened remains visible.
         val loadedCharacter = dao.getCharacterExact(canonicalWord) ?: dao.getCharacterExact(word)
         charData = loadedCharacter
+        // Ideographic Description Characters (U+2FF0 to U+2FFB). Using unicode escapes
+        // prevents text-generation or copy-paste artifacts from turning them into
+        // empty character literals (''), which breaks the Kotlin compiler.
         val idsSymbols = setOf(
-            '⿰', '', '', '⿳', '⿴', '', '', '⿷',
-            '⿸', '', '⿺', '⿻', '？', ' '
+            '\u2FF0', '\u2FF1', '\u2FF2', '\u2FF3', '\u2FF4', '\u2FF5',
+            '\u2FF6', '\u2FF7', '\u2FF8', '\u2FF9', '\u2FFA', '\u2FFB',
+            '？', ' '
         )
         components = loadedCharacter?.decomposition
             ?.filter { it !in idsSymbols }
