@@ -1,6 +1,7 @@
 package com.infdesk.hanziwriting.data
 
 import android.content.Context
+import android.os.SystemClock
 import com.infdesk.hanziwriting.utils.AppState
 import com.infdesk.hanziwriting.utils.DebugLog
 import kotlinx.coroutines.Dispatchers
@@ -20,19 +21,18 @@ object DatabaseInitializer {
 
     suspend fun initializeIfNeeded(context: Context, database: AppDatabase): Boolean {
         if (!needsInitialization(context)) {
+            DebugLog.d("DBInit", "skipped (init_version already current)")
             AppState.isInitializing = false
             return true
         }
-
         AppState.isInitializing = true
         AppState.initProgress = 0f
         AppState.initMessage = "Preparing Hanzi Writing…"
-
         return withContext(Dispatchers.IO) {
+            val initT0 = SystemClock.elapsedRealtime()
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             try {
                 val sqlite = database.openHelper.writableDatabase
-
                 if (AppDatabase.hasPrebuiltDatabase(context)) {
                     // Room copies the prebuilt database on first install. Existing
                     // databases are migrated in place and retain the user's lists.
@@ -47,6 +47,7 @@ object DatabaseInitializer {
                 } else {
                     // Development fallback for local builds that do not run the CI
                     // prebuild workflow. Release APKs use the prebuilt database.
+                    DebugLog.d("DBInit", "WARNING: prebuilt asset missing; using ON-DEVICE fallback parser")
                     AppState.initMessage = "Loading dictionary…"
                     AppState.initProgress = 0.10f
                     val dao = database.hanziDao()
@@ -54,18 +55,15 @@ object DatabaseInitializer {
                     dao.clearGraphics()
                     AssetParser.parseAndSaveDictionary(context, dao)
                     AppState.initProgress = 0.40f
-
                     AppState.initMessage = "Loading stroke graphics…"
                     AssetParser.parseAndSaveGraphics(context, dao)
                     AppState.initProgress = 0.70f
-
                     AppState.initMessage = "Loading radicals & components…"
                     AssetParser.parseAndSaveRadicals(context, dao)
                     check(scalarCount(sqlite, "SELECT COUNT(*) FROM hanzi_characters") > 0L) {
                         "The Hanzi dictionary is empty after initialization."
                     }
                 }
-
                 val embeddedForms = scalarCount(sqlite, "SELECT COUNT(*) FROM hanzi_word_forms")
                 val embeddedEntries = scalarCount(sqlite, "SELECT COUNT(*) FROM vocabulary_entries")
                 if (embeddedForms > 0L && embeddedEntries > 0L) {
@@ -81,7 +79,11 @@ object DatabaseInitializer {
                 } else {
                     DebugLog.d("DBInit", "Vocabulary metadata is missing; rebuild the app with the curriculum datasets")
                 }
-
+                DebugLog.d(
+                    "DBInit",
+                    "path=${if (AppDatabase.hasPrebuiltDatabase(context)) "prebuilt" else "ON-DEVICE FALLBACK PARSER"} " +
+                        "elapsedMs=${SystemClock.elapsedRealtime() - initT0}"
+                )
                 prefs.edit().putInt(KEY_INIT_VERSION, CURRENT_INIT_VERSION).apply()
                 AppState.initProgress = 1f
                 AppState.initMessage = "Ready!"
@@ -115,12 +117,10 @@ object DatabaseInitializer {
             DebugLog.d("DBInit", "Vocabulary metadata already present; skipping import")
             return
         }
-
         val cachedFile = File(context.cacheDir, "hanzi_vocabulary_metadata_import.db")
         context.assets.open(AppDatabase.VOCABULARY_METADATA_ASSET).use { input ->
             FileOutputStream(cachedFile).use { output -> input.copyTo(output) }
         }
-
         var attached = false
         try {
             destination.execSQL("ATTACH DATABASE ? AS vocabulary_source", arrayOf(cachedFile.absolutePath))
@@ -145,7 +145,6 @@ object DatabaseInitializer {
             if (attached) runCatching { destination.execSQL("DETACH DATABASE vocabulary_source") }
             cachedFile.delete()
         }
-
         val forms = scalarCount(destination, "SELECT COUNT(*) FROM hanzi_word_forms")
         val entries = scalarCount(destination, "SELECT COUNT(*) FROM vocabulary_entries")
         check(forms > 0L && entries > 0L) { "The prebuilt vocabulary metadata is empty or incomplete." }
