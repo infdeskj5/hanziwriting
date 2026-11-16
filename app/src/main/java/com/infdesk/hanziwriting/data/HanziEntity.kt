@@ -28,7 +28,11 @@ data class PracticeList(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "list_items", primaryKeys = ["listId", "character"])
+@Entity(
+    tableName = "list_items",
+    primaryKeys = ["listId", "character"],
+    indices = [Index(value = ["listId"]), Index(value = ["character"])]
+)
 data class ListItem(
     val listId: Int,
     val character: String
