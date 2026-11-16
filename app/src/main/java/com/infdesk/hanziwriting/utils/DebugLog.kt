@@ -4,17 +4,23 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 object DebugLog {
     private var logFile: File? = null
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "debug-log").apply { isDaemon = true }
+    }
 
     fun init(context: Context) {
-        logFile = File(context.filesDir, "debug_log.txt")
-        // Keep the log file from growing forever
-        if (logFile!!.exists() && logFile!!.length() > 512 * 1024) {
-            logFile!!.writeText("")
+        executor.execute {
+            val f = File(context.filesDir, "debug_log.txt")
+            if (f.exists() && f.length() > 512 * 1024) f.writeText("")
+            logFile = f
         }
     }
 
@@ -32,9 +38,17 @@ object DebugLog {
         write(sb.toString())
     }
 
+    /** Blocks until all queued lines are on disk. Call before reading the log. */
+    fun flushSync(timeoutMs: Long = 3000L) {
+        runCatching { executor.submit { }.get(timeoutMs, TimeUnit.MILLISECONDS) }
+    }
+
     private fun write(message: String) {
-        try {
-            logFile?.appendText("${timeFormat.format(Date())} $message\n")
-        } catch (_: Exception) { }
+        val now = Date()
+        executor.execute {
+            runCatching {
+                logFile?.appendText("${timeFormat.format(now)} $message\n")
+            }
+        }
     }
 }
