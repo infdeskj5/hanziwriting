@@ -46,8 +46,8 @@ data class CharacterProgress(
     val orderedComponents: List<ComponentInfo> = emptyList(),
     val idsRoot: IdsNode? = null,
     val leafRank: Map<Int, Int> = emptyMap(),
-    // Tier 1 done: dictionary row + IDS tree + component count are known, so
-    // phase planning is valid even before stroke assets arrive.
+    // Tier 1 done: dictionary row + IDS tree + component count known, so phase
+    // planning is valid even before stroke assets arrive.
     val planned: Boolean = false,
     // Tier 2 done: stroke graphics parsed and component order refined.
     val assetsLoaded: Boolean = false
@@ -114,10 +114,10 @@ class PracticeViewModel(
         waitingForNext = false
         currentGlobalPhaseIndex = 0
         currentCharIndex = 0
-        // Practice each distinct character once per session. Curriculum lists
-        // repeat characters hundreds of times; loading/parsing every occurrence
-        // was the main cause of the multi-second freeze when opening HSK/TOCFL
-        // sized practice sets.
+        // Practice each distinct character once. Curriculum lists repeat glyphs
+        // hundreds of times; the old loader queried and Gson-parsed graphics for
+        // EVERY occurrence on the main thread, which froze the app for tens of
+        // seconds on HSK/TOCFL-sized sets.
         val distinctCharacters = input.toList().map { it.toString() }.distinct()
         distinctCharacters.forEach { characters.add(CharacterProgress(character = it)) }
         if (characters.isEmpty()) {
@@ -125,9 +125,8 @@ class PracticeViewModel(
             return
         }
         loadJob = viewModelScope.launch {
-            // Tier 1 (planning): batched dictionary lookups + cheap IDS parsing,
-            // entirely off the main thread. Stroke graphics JSON is NOT touched
-            // here, so even several thousand characters prepare quickly.
+            // Tier 1 (planning): batched dictionary rows + cheap IDS parsing,
+            // entirely off the main thread. No graphics JSON is touched here.
             val rowsByCharacter: Map<String, HanziCharacter> = withContext(Dispatchers.Default) {
                 val dao = database.hanziDao()
                 val rows = HashMap<String, HanziCharacter>(distinctCharacters.size * 2)
@@ -164,9 +163,9 @@ class PracticeViewModel(
     }
 
     /**
-     * Tier 2 (assets): parse the heavy stroke graphics JSON and refine the
-     * component writing order for the current character plus a small lookahead.
-     * Everything else stays unparsed until (and unless) it becomes current.
+     * Tier 2 (assets): heavy stroke graphics JSON + writing-order refinement for
+     * the current character plus a small lookahead only. Everything else stays
+     * unparsed until (and unless) it becomes current.
      */
     private fun scheduleAssetLoad(fromIndex: Int) {
         if (isAllComplete || characters.isEmpty()) return
@@ -213,7 +212,7 @@ class PracticeViewModel(
     }
 
     /** Reorders components by first stroke appearance (matches.json), keeping
-     *  the IDS document order as fallback. Runs only for windowed characters. */
+     *  IDS document order as fallback. Runs only for windowed characters. */
     private fun refineComponentOrder(
         cp: CharacterProgress
     ): Pair<List<ComponentInfo>, Map<Int, Int>> {
@@ -463,10 +462,10 @@ class PracticeViewModel(
         usedOptionIds.clear()
     }
 
-    /** PracticeScreen creates this view model with remember(), so onCleared()
-     *  is never invoked by a ViewModelStore. The screen must call dispose() to
-     *  stop background loads; otherwise abandoned sessions keep hammering the
-     *  database and the main thread forever. */
+    /** PracticeScreen creates this view model with remember(), so a ViewModelStore
+     *  never calls onCleared(). The screen MUST call dispose() when it leaves
+     *  composition; otherwise abandoned sessions keep loading forever and make
+     *  the entire app (including List Contents) slow and unstable. */
     fun dispose() {
         loadJob?.cancel()
         assetJob?.cancel()
