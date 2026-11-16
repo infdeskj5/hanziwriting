@@ -20,12 +20,12 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
     override fun uncaughtException(t: Thread, e: Throwable) {
         val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date())
         val file = File(context.filesDir, "crash_log_$timestamp.txt")
-        
         val sw = StringWriter()
         val pw = PrintWriter(sw)
         e.printStackTrace(pw)
-        
         file.writeText("Crash at: $timestamp\nThread: ${t.name}\n\n${sw.toString()}\n")
+        DebugLog.e("Crash", "Uncaught exception on thread ${t.name}", e)
+        DebugLog.flushSync(1500)
         defaultHandler?.uncaughtException(t, e)
     }
 
