@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -29,15 +27,9 @@ import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
 import com.infdesk.hanziwriting.utils.DebugLog
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import com.infdesk.hanziwriting.utils.Diagnostics
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-
-private const val FIRST_PAGE = 300
-private const val APPEND_CHUNK = 600
+import kotlinx.coroutines.withFrameNanos
 
 @Composable
 fun ListContentsScreen(
@@ -55,7 +47,6 @@ fun ListContentsScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var characters by remember(listId) { mutableStateOf<List<String>>(emptyList()) }
-    var totalCount by remember(listId) { mutableStateOf(0) }
     var listName by remember(listId) { mutableStateOf("List contents") }
     var isLoading by remember(listId) { mutableStateOf(true) }
     var isBusy by remember { mutableStateOf(false) }
@@ -63,45 +54,39 @@ fun ListContentsScreen(
     var showAddSelectedDialog by remember { mutableStateOf(false) }
     var destinationLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
 
+    DisposableEffect(listId) {
+        onDispose { DebugLog.d("Probe", "ListContents left composition list=$listId") }
+    }
+
+    // The list contains at most a few thousand short strings. Loading this small
+    // projection once is cheaper and smoother than fetching another OFFSET page
+    // during a fast scroll. LazyColumn still composes only visible rows.
     LaunchedEffect(listId) {
+        val openSeq = Diagnostics.openSequence(listId)
+        val sinceTap = Diagnostics.sinceMark("listTap:$listId")
         val t0 = SystemClock.elapsedRealtime()
         isLoading = true
         try {
+            val tQ0 = SystemClock.elapsedRealtime()
             val lists = dao.getAllLists()
+            val raw = dao.getCharactersInListInInsertionOrder(listId)
+            val tQ1 = SystemClock.elapsedRealtime()
+            val loadedCharacters = raw.distinct()
+            val tP1 = SystemClock.elapsedRealtime()
             listName = lists.firstOrNull { it.listId == listId }?.name ?: "List contents"
-            val tQueryStart = SystemClock.elapsedRealtime()
-            val raw = withContext(Dispatchers.IO) {
-                dao.getCharactersInListInInsertionOrder(listId)
-            }
-            val tQueryEnd = SystemClock.elapsedRealtime()
-            val distinct = withContext(Dispatchers.Default) { raw.distinct() }
-            val tPrepEnd = SystemClock.elapsedRealtime()
-            totalCount = distinct.size
-
-            characters = distinct.take(FIRST_PAGE)
-            onSelectionChange(selectedItems.intersect(distinct.toSet()))
+            characters = loadedCharacters
+            onSelectionChange(selectedItems.intersect(loadedCharacters.toSet()))
             isLoading = false
-            if (characters.isNotEmpty()) {
-                withTimeoutOrNull(1_000L) { listState.scrollToItem(characters.lastIndex, 0) }
-            }
-            val tFirstPaint = SystemClock.elapsedRealtime()
-            var index = FIRST_PAGE
-            while (index < distinct.size) {
-                val end = minOf(index + APPEND_CHUNK, distinct.size)
-                characters = characters + distinct.subList(index, end)
-                index = end
-                delay(16L)
-            }
+            // Wait for the first frame that actually shows the rows.
+            withFrameNanos { }
+            val tFirst = SystemClock.elapsedRealtime()
             DebugLog.d(
                 "ListContents",
-                "list=$listId rows=${raw.size} distinct=${distinct.size} " +
-                    "queryMs=${tQueryEnd - tQueryStart} prepMs=${tPrepEnd - tQueryEnd} " +
-                    "firstPaintMs=${tFirstPaint - t0} totalMs=${SystemClock.elapsedRealtime() - t0}"
+                "list=$listId open=#$openSeq sinceTapMs=$sinceTap rows=${raw.size} " +
+                    "distinct=${loadedCharacters.size} queryMs=${tQ1 - tQ0} prepMs=${tP1 - tQ1} " +
+                    "firstFrameMs=${tFirst - t0} totalMs=${tFirst - t0}"
             )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            DebugLog.e("ListContents", "Failed to load list $listId", error)
+        } finally {
             isLoading = false
         }
     }
@@ -116,8 +101,6 @@ fun ListContentsScreen(
         characters.filter { it in selectedItems }
     }
     val canAct = selectedInList.isNotEmpty() && !isBusy
-    val visualItems = remember(characters) { characters.asReversed() }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -134,11 +117,7 @@ fun ListContentsScreen(
                 Text(listName, style = MaterialTheme.typography.headlineSmall)
                 if (!isLoading) {
                     Text(
-                        if (characters.size < totalCount) {
-                            "${characters.size} of $totalCount items"
-                        } else {
-                            "$totalCount items"
-                        },
+                        "${characters.size} items",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -153,7 +132,7 @@ fun ListContentsScreen(
                     contentAlignment = Alignment.Center
                 ) { CircularProgressIndicator() }
             }
-            totalCount == 0 -> {
+            characters.isEmpty() -> {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
@@ -171,25 +150,64 @@ fun ListContentsScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    // Item 0 is anchored to the bottom. This preserves the list's
+                    // established bottom-first ordering without OFFSET page loads.
+                    reverseLayout = true,
                     contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(
-                        visualItems,
-                        key = { it },
-                        contentType = { "list-row" }
-                    ) { item ->
-                        ListContentRow(
-                            item = item,
-                            isSelected = item in selectedItems,
-                            onPractice = { onPracticeItemClick(item) },
-                            onDetails = { onWordClick(item) },
-                            onToggle = { checked ->
-                                onSelectionChange(
-                                    if (checked) selectedItems + item else selectedItems - item
+                    items(characters, key = { it }) { item ->
+                        val isSelected = item in selectedItems
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.medium)
+                                .background(
+                                    if (isSelected) {
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                )
+                                .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item,
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { onPracticeItemClick(item) },
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = "Practice $item",
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
                             }
-                        )
+                            IconButton(
+                                onClick = { onWordClick(item) },
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = "View details for $item",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { checked ->
+                                    onSelectionChange(
+                                        if (checked) selectedItems + item else selectedItems - item
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -267,7 +285,6 @@ fun ListContentsScreen(
                                     dao.deleteSelectedListItems(listId, chunk)
                                 }
                                 characters = characters.filterNot { it in deleteSet }
-                                totalCount = characters.size
                                 onSelectionChange(selectedItems - deleteSet)
                                 showDeleteConfirmation = false
                             } finally {
@@ -349,85 +366,5 @@ fun ListContentsScreen(
                 ) { Text("Close") }
             }
         )
-    }
-}
-
-/**
- * Lightweight row: plain clickable Icons and a simple check surface instead of
- * IconButton/Checkbox. Those Material3 components each pull in Surface + ripple +
- * minimumInteractiveComponentSize + animation machinery (~40 composables/row),
- * which dominated frame time while scrolling multi-thousand-row curriculum lists.
- */
-@Composable
-private fun ListContentRow(
-    item: String,
-    isSelected: Boolean,
-    onPractice: () -> Unit,
-    onDetails: () -> Unit,
-    onToggle: (Boolean) -> Unit
-) {
-    val container = if (isSelected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
-    val primary = MaterialTheme.colorScheme.primary
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
-            .background(container)
-            .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = item,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        Icon(
-            Icons.Default.PlayArrow,
-            contentDescription = "Practice $item",
-            tint = primary,
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(21.dp))
-                .clickable(onClick = onPractice)
-                .padding(9.dp)
-        )
-        Icon(
-            Icons.Default.Info,
-            contentDescription = "View details for $item",
-            tint = primary,
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(21.dp))
-                .clickable(onClick = onDetails)
-                .padding(9.dp)
-        )
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { onToggle(!isSelected) }
-                .padding(9.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(
-                    if (isSelected) primary
-                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isSelected) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
     }
 }
