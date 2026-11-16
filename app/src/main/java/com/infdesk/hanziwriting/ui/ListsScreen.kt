@@ -57,7 +57,7 @@ fun ListsScreen(
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
     val haptic = LocalHapticFeedback.current
-    val nameFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val nameFocusRequester = remember { FocusRequester() }
     val listPreferences = remember {
         context.getSharedPreferences(LIST_ORDER_PREFS, android.content.Context.MODE_PRIVATE)
     }
@@ -117,7 +117,7 @@ fun ListsScreen(
     // fast drag crosses several cards between pointer events, jump directly to
     // the furthest crossed card instead of silently stopping after one swap.
     // During the drag only in-memory order is updated; SharedPreferences is
-    // written once when the drag ends (see onDragEnd/onDragCancel).
+    // written once when the drag ends (onDragEnd/onDragCancel).
     val moveListVisually = rememberUpdatedState<(Int, Int) -> Unit> { listId, targetVisualIndex ->
         val visual = (dragVisualOrder.ifEmpty { latestBottomToTop.value.asReversed() }).toMutableList()
         val from = visual.indexOfFirst { it.listId == listId }
@@ -462,6 +462,7 @@ fun ListsScreen(
             },
             dismissButton = {
                 TextButton(
+                    enabled = !isDeleting,
                     onClick = { listPendingDeletion = null }
                 ) { Text("Cancel") }
             }
