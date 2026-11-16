@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.ui
 
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -25,8 +26,16 @@ import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
 import com.infdesk.hanziwriting.data.ListItem
 import com.infdesk.hanziwriting.data.PracticeList
+import com.infdesk.hanziwriting.utils.DebugLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+private const val FIRST_PAGE = 300
+private const val APPEND_CHUNK = 600
 
 @Composable
 fun ListContentsScreen(
@@ -44,6 +53,7 @@ fun ListContentsScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var characters by remember(listId) { mutableStateOf<List<String>>(emptyList()) }
+    var totalCount by remember(listId) { mutableStateOf(0) }
     var listName by remember(listId) { mutableStateOf("List contents") }
     var isLoading by remember(listId) { mutableStateOf(true) }
     var isBusy by remember { mutableStateOf(false) }
@@ -51,26 +61,49 @@ fun ListContentsScreen(
     var showAddSelectedDialog by remember { mutableStateOf(false) }
     var destinationLists by remember { mutableStateOf<List<PracticeList>>(emptyList()) }
 
-    // The list contains at most a few thousand short strings. Loading this small
-    // projection once is cheaper and smoother than fetching another OFFSET page
-    // during a fast scroll. LazyColumn still composes only visible rows.
     LaunchedEffect(listId) {
+        val t0 = SystemClock.elapsedRealtime()
         isLoading = true
         try {
             val lists = dao.getAllLists()
-            val loadedCharacters = dao.getCharactersInListInInsertionOrder(listId).distinct()
             listName = lists.firstOrNull { it.listId == listId }?.name ?: "List contents"
-            characters = loadedCharacters
-            onSelectionChange(selectedItems.intersect(loadedCharacters.toSet()))
-        } finally {
+            val tQueryStart = SystemClock.elapsedRealtime()
+            val raw = withContext(Dispatchers.IO) {
+                dao.getCharactersInListInInsertionOrder(listId)
+            }
+            val tQueryEnd = SystemClock.elapsedRealtime()
+            val distinct = withContext(Dispatchers.Default) { raw.distinct() }
+            val tPrepEnd = SystemClock.elapsedRealtime()
+            totalCount = distinct.size
+
+            // Publish a first page immediately so the first frame never waits for
+            // the whole curriculum list; append the remainder in chunks. Keys keep
+            // the LazyColumn anchored while the tail grows.
+            characters = distinct.take(FIRST_PAGE)
+            onSelectionChange(selectedItems.intersect(distinct.toSet()))
             isLoading = false
-        }
-        // Anchor the first inserted item to the bottom edge once the list is on
-        // screen (the visual order is reversed, so the bottom is the last index).
-        // scrollToItem clamps to max scroll for long lists and is a no-op offset
-        // for short ones, where Alignment.Bottom does the anchoring.
-        if (characters.isNotEmpty()) {
-            withTimeoutOrNull(1_000L) { listState.scrollToItem(characters.lastIndex, 0) }
+            if (characters.isNotEmpty()) {
+                withTimeoutOrNull(1_000L) { listState.scrollToItem(characters.lastIndex, 0) }
+            }
+            val tFirstPaint = SystemClock.elapsedRealtime()
+            var index = FIRST_PAGE
+            while (index < distinct.size) {
+                val end = minOf(index + APPEND_CHUNK, distinct.size)
+                characters = characters + distinct.subList(index, end)
+                index = end
+                delay(16L)
+            }
+            DebugLog.d(
+                "ListContents",
+                "list=$listId rows=${raw.size} distinct=${distinct.size} " +
+                    "queryMs=${tQueryEnd - tQueryStart} prepMs=${tPrepEnd - tQueryEnd} " +
+                    "firstPaintMs=${tFirstPaint - t0} totalMs=${SystemClock.elapsedRealtime() - t0}"
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            DebugLog.e("ListContents", "Failed to load list $listId", error)
+            isLoading = false
         }
     }
 
@@ -84,10 +117,9 @@ fun ListContentsScreen(
         characters.filter { it in selectedItems }
     }
     val canAct = selectedInList.isNotEmpty() && !isBusy
-    // Normal (non-reversed) LazyColumn + reversed data + bottom alignment, matching
-    // ListsScreen. On Compose 1.6.x the reverseLayout path both mis-anchors short
-    // content and pays a mirrored-placement cost on every scroll pass, which is
-    // what made 5 000-row curriculum lists feel slow and unstable.
+    // Normal LazyColumn + reversed data + bottom alignment (the pattern proven in
+    // ListsScreen): bottom-first ordering without reverseLayout's anchoring and
+    // mirrored-placement costs.
     val visualItems = remember(characters) { characters.asReversed() }
 
     Column(
@@ -106,7 +138,11 @@ fun ListContentsScreen(
                 Text(listName, style = MaterialTheme.typography.headlineSmall)
                 if (!isLoading) {
                     Text(
-                        "${characters.size} items",
+                        if (characters.size < totalCount) {
+                            "${characters.size} of $totalCount items"
+                        } else {
+                            "$totalCount items"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -121,7 +157,7 @@ fun ListContentsScreen(
                     contentAlignment = Alignment.Center
                 ) { CircularProgressIndicator() }
             }
-            characters.isEmpty() -> {
+            totalCount == 0 -> {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
@@ -271,6 +307,7 @@ fun ListContentsScreen(
                                     dao.deleteSelectedListItems(listId, chunk)
                                 }
                                 characters = characters.filterNot { it in deleteSet }
+                                totalCount = characters.size
                                 onSelectionChange(selectedItems - deleteSet)
                                 showDeleteConfirmation = false
                             } finally {
