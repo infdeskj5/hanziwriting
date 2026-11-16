@@ -1,6 +1,5 @@
 package com.infdesk.hanziwriting.utils
 
-import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Build
@@ -18,7 +17,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -50,7 +48,7 @@ object Diagnostics {
         DebugLog.d("Boot", installSummary(app))
         DebugLog.d(
             "Boot",
-            "device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.SDK_INT} " +
+            "device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
                 "abis=${Build.SUPPORTED_ABIS.joinToString()} pid=${Process.myPid()} " +
                 "prebuiltAsset=${AppDatabase.hasPrebuiltDatabase(app)} " +
                 "metadataAsset=${AppDatabase.hasVocabularyMetadata(app)} " +
@@ -95,8 +93,7 @@ object Diagnostics {
         if (Build.VERSION.SDK_INT >= 28) {
             thread.penaltyListener(Executors.newSingleThreadExecutor()) { v ->
                 if (strictLogged.incrementAndGet() <= 80) {
-                    val stack = runCatching { v.stackTraceToString() }.getOrElse { "" }
-                    DebugLog.e("StrictMode", v.toString() + "\n" + stack)
+                    DebugLog.e("StrictMode", v.toString())
                 }
             }
         } else {
@@ -201,7 +198,6 @@ object Diagnostics {
 
     fun memorySummary(): String {
         val rt = Runtime.getRuntime()
-        val am = android.app.ActivityManager::class.java
         return "heapUsedMb=${(rt.totalMemory() - rt.freeMemory()) / 1048576} " +
             "heapTotalMb=${rt.totalMemory() / 1048576} maxMb=${rt.maxMemory() / 1048576} " +
             "nativeMb=${Debug.getNativeHeapAllocatedSize() / 1048576}"
