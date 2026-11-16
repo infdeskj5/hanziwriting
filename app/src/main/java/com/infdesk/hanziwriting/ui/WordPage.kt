@@ -125,8 +125,8 @@ fun WordPage(
         val loadedCharacter = dao.getCharacterExact(canonicalWord) ?: dao.getCharacterExact(word)
         charData = loadedCharacter
         val idsSymbols = setOf(
-            '⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷',
-            '⿸', '⿹', '⿺', '⿻', '？', ' '
+            '⿰', '', '', '⿳', '⿴', '', '', '⿷',
+            '⿸', '', '⿺', '⿻', '？', ' '
         )
         components = loadedCharacter?.decomposition
             ?.filter { it !in idsSymbols }
