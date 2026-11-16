@@ -17,7 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VocabularyEntry::class,
         StudyListBinding::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -60,6 +60,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * list_items never had an index on listId, so every per-list read and
+         * delete scanned ALL curriculum rows (HSK + TOCFL combined) and sorted
+         * them in a temp B-tree. These two indexes make every list operation
+         * O(items-in-that-list) instead of O(all-items-ever-imported).
+         * Names match Room's default index naming so schema validation passes.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_list_items_listId ON list_items(listId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_list_items_character ON list_items(character)"
+                )
+            }
+        }
+
         fun hasPrebuiltDatabase(context: Context): Boolean =
             context.applicationContext.assets.list("")?.contains(PREBUILT_DATABASE_ASSET) == true
 
@@ -75,13 +93,11 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         DATABASE_NAME
                     )
-
                     if (hasPrebuiltDatabase(appContext)) {
                         builder.createFromAsset(PREBUILT_DATABASE_ASSET)
                     }
-
                     val instance = builder
-                        .addMigrations(MIGRATION_2_3)
+                        .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                         .fallbackToDestructiveMigration()
                         .build()
                     INSTANCE = instance
