@@ -9,6 +9,7 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
 import android.graphics.RectF
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +31,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.PathParser
+import com.infdesk.hanziwriting.utils.DebugLog
+import com.infdesk.hanziwriting.utils.Diagnostics
 import com.infdesk.hanziwriting.utils.HanziTransform
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -72,21 +75,17 @@ private class StrokePaceProfile private constructor(
 ) {
     fun distanceFractionAt(timeFraction: Float): Float {
         if (cumulativeTime.size < 2) return timeFraction.coerceIn(0f, 1f)
-
         val time = timeFraction.coerceIn(0f, 1f)
         var low = 0
         var high = cumulativeTime.lastIndex
-
         while (low + 1 < high) {
             val middle = (low + high) ushr 1
             if (cumulativeTime[middle] < time) low = middle else high = middle
         }
-
         val timeStart = cumulativeTime[low]
         val timeEnd = cumulativeTime[high]
         val segmentFraction = ((time - timeStart) / (timeEnd - timeStart).coerceAtLeast(0.000001f))
             .coerceIn(0f, 1f)
-
         // Samples are evenly spaced by distance, so the interpolated sample
         // index is also the normalized distance travelled along the path.
         return ((low.toFloat() + segmentFraction) / cumulativeTime.lastIndex)
@@ -96,7 +95,6 @@ private class StrokePaceProfile private constructor(
     companion object {
         fun create(measure: AndroidPathMeasure, length: Float): StrokePaceProfile {
             if (length <= 0.5f) return StrokePaceProfile(floatArrayOf(0f, 1f))
-
             // About one sample every 2.5 px, with limits to bound preparation
             // cost for unusually long or very short source paths.
             val sampleCount = ceil(length / 2.5f).toInt().coerceIn(48, 192)
@@ -107,12 +105,10 @@ private class StrokePaceProfile private constructor(
             val cumulative = FloatArray(sampleCount)
             val tangentWindow = (length * 0.025f).coerceIn(2f, 5f)
             val halfRightAngle = (PI.toFloat() * 0.5f)
-
             for (index in 0 until sampleCount) {
                 val distance = length * index.toFloat() / (sampleCount - 1).toFloat()
                 val beforeDistance = (distance - tangentWindow).coerceAtLeast(0f)
                 val afterDistance = (distance + tangentWindow).coerceAtMost(length)
-
                 var turnWeight = 1f
                 if (afterDistance - beforeDistance > 0.5f &&
                     measure.getPosTan(beforeDistance, samplePosition, beforeTangent) &&
@@ -124,14 +120,12 @@ private class StrokePaceProfile private constructor(
                         beforeTangent[1] * afterTangent[1]
                     val angle = abs(atan2(cross, dot))
                     val turnStrength = (angle / halfRightAngle).coerceIn(0f, 1f)
-
                     // Square the turn signal so gentle curves stay fluid while
                     // sharper vertices receive a more noticeable slowdown.
                     turnWeight += 1.8f * turnStrength * turnStrength
                 }
                 weights[index] = turnWeight
             }
-
             // Integrate the local time-per-distance weights. Trapezoidal
             // integration keeps the profile continuous across sample points.
             var total = 0f
@@ -139,7 +133,6 @@ private class StrokePaceProfile private constructor(
                 total += (weights[index - 1] + weights[index]) * 0.5f
                 cumulative[index] = total
             }
-
             if (total <= 0f) return StrokePaceProfile(floatArrayOf(0f, 1f))
             for (index in cumulative.indices) {
                 cumulative[index] /= total
@@ -154,14 +147,12 @@ private class StrokePaceProfile private constructor(
 private fun buildSmoothAndroidPath(points: List<Offset>): AndroidPath {
     val path = AndroidPath()
     if (points.isEmpty()) return path
-
     path.moveTo(points[0].x, points[0].y)
     if (points.size == 1) return path
     if (points.size == 2) {
         path.lineTo(points[1].x, points[1].y)
         return path
     }
-
     for (i in 1 until points.size - 1) {
         val current = points[i]
         val next = points[i + 1]
@@ -178,7 +169,6 @@ private fun buildSmoothAndroidPath(points: List<Offset>): AndroidPath {
 
 private fun turnAmount(points: List<Offset>): Float {
     if (points.size < 3) return 0f
-
     var total = 0f
     for (i in 0 until points.size - 2) {
         val dx1 = points[i + 1].x - points[i].x
@@ -187,7 +177,6 @@ private fun turnAmount(points: List<Offset>): Float {
         val dy2 = points[i + 2].y - points[i + 1].y
         val length1 = dist(dx1, dy1)
         val length2 = dist(dx2, dy2)
-
         if (length1 > 0.5f && length2 > 0.5f) {
             total += abs(atan2(dx1 * dy2 - dy1 * dx2, dx1 * dx2 + dy1 * dy2))
         }
@@ -200,12 +189,10 @@ private fun setBoundsFromPoints(points: List<Offset>, out: RectF) {
         out.set(0f, 0f, 0f, 0f)
         return
     }
-
     var minX = Float.MAX_VALUE
     var minY = Float.MAX_VALUE
     var maxX = -Float.MAX_VALUE
     var maxY = -Float.MAX_VALUE
-
     for (point in points) {
         minX = min(minX, point.x)
         minY = min(minY, point.y)
@@ -219,7 +206,6 @@ private fun estimateMaskWidth(bounds: RectF, canvasSizePx: Float): Float {
     val width = bounds.width()
     val height = bounds.height()
     if (width <= 0f || height <= 0f) return canvasSizePx * 0.11f
-
     val maxDimension = max(width, height)
     val minDimension = min(width, height)
     val suggested = if (maxDimension < canvasSizePx * 0.20f) {
@@ -251,21 +237,28 @@ fun AnimationCanvas(
     onComplete: () -> Unit = {}
 ) {
     val density = LocalDensity.current
+    // Live-work probe: counts how many animation canvases are composed right now.
+    // If this stays above zero on a screen with no visible animation, a loop is
+    // leaking across navigation.
+    DisposableEffect(Unit) {
+        Diagnostics.anim.incrementAndGet()
+        onDispose { Diagnostics.anim.decrementAndGet() }
+    }
     val canvasSizePx = with(density) { 100.dp.toPx() }
     val bitmapSize = ceil(canvasSizePx).toInt().coerceAtLeast(1)
-
     val prepared = remember(medians, strokes, canvasSizePx) {
-        if (medians.isEmpty()) {
+        // Preparation (SVG parsing + PathMeasure sampling) runs during
+        // composition on the main thread; measure and log its cost.
+        val prepT0 = SystemClock.uptimeMillis()
+        val built = if (medians.isEmpty()) {
             emptyList()
         } else {
             val scale = canvasSizePx / HanziTransform.GRID_WIDTH
             val count = if (strokes.isEmpty()) medians.size else minOf(medians.size, strokes.size)
             val result = ArrayList<PreparedStroke>(count)
-
             for (i in 0 until count) {
                 val points = medians[i].map { HanziTransform.toCanvas(it, scale) }
                 if (points.isEmpty()) continue
-
                 val svg = if (i < strokes.size) {
                     try {
                         PathParser.createPathFromPathData(strokes[i]).apply {
@@ -277,13 +270,11 @@ fun AnimationCanvas(
                 } else {
                     null
                 }
-
                 val median = buildSmoothAndroidPath(points)
                 val measure = AndroidPathMeasure().apply { setPath(median, false) }
                 val length = measure.length
                 val bounds = RectF()
                 var hasBounds = false
-
                 if (svg != null) {
                     try {
                         svg.computeBounds(bounds, true)
@@ -292,12 +283,10 @@ fun AnimationCanvas(
                         hasBounds = false
                     }
                 }
-
                 if (!hasBounds) setBoundsFromPoints(points, bounds)
                 if (bounds.width() <= 0f || bounds.height() <= 0f) {
                     bounds.set(0f, 0f, canvasSizePx, canvasSizePx)
                 }
-
                 val maskWidth = max(estimateMaskWidth(bounds, canvasSizePx), canvasSizePx * 0.18f)
                 val penWidth = if (svg != null) maskWidth * 0.92f else canvasSizePx * 0.075f
                 val isDot = points.size <= 1 || length < canvasSizePx * 0.05f
@@ -309,7 +298,6 @@ fun AnimationCanvas(
                         .toInt()
                         .coerceIn(250, 820)
                 }
-
                 result.add(
                     PreparedStroke(
                         svg = svg,
@@ -329,14 +317,18 @@ fun AnimationCanvas(
             }
             result
         }
+        DebugLog.d(
+            "AnimPrep",
+            "strokes=${built.size} prepMs=${SystemClock.uptimeMillis() - prepT0} " +
+                "thread=${Thread.currentThread().name}"
+        )
+        built
     }
-
     val guideColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f).toArgb()
     val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.10f).toArgb()
     val inkColor = MaterialTheme.colorScheme.primary.toArgb()
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
     val tileShape = RoundedCornerShape(18.dp)
-
     // Static grid + guide are rasterised once. Only animated ink is redrawn.
     val guideBitmap = remember(prepared, bitmapSize, guideColor, gridColor) {
         Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888).also { bitmap ->
@@ -352,7 +344,6 @@ fun AnimationCanvas(
             canvas.drawLine(0f, middle, canvasSizePx, middle, gridPaint)
             canvas.drawLine(0f, 0f, canvasSizePx, canvasSizePx, gridPaint)
             canvas.drawLine(canvasSizePx, 0f, 0f, canvasSizePx, gridPaint)
-
             val fillPaint = Paint().apply {
                 isAntiAlias = true
                 style = Paint.Style.FILL
@@ -365,7 +356,6 @@ fun AnimationCanvas(
                 strokeJoin = Paint.Join.ROUND
                 color = guideColor
             }
-
             for (stroke in prepared) {
                 when {
                     stroke.svg != null -> canvas.drawPath(stroke.svg, fillPaint)
@@ -383,7 +373,6 @@ fun AnimationCanvas(
             }
         }
     }
-
     val inkFillPaint = remember(inkColor) {
         Paint().apply {
             isAntiAlias = true
@@ -410,14 +399,12 @@ fun AnimationCanvas(
     }
     val activeBitmapCanvas = remember(activeBitmap) { AndroidCanvas(activeBitmap) }
     val maskBitmapCanvas = remember(maskBitmap) { AndroidCanvas(maskBitmap) }
-
     DisposableEffect(activeBitmap, maskBitmap) {
         onDispose {
             if (!activeBitmap.isRecycled) activeBitmap.recycle()
             if (!maskBitmap.isRecycled) maskBitmap.recycle()
         }
     }
-
     val maskStrokePaint = remember {
         Paint().apply {
             isAntiAlias = true
@@ -434,50 +421,37 @@ fun AnimationCanvas(
             xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
         }
     }
-
     var currentStroke by remember(prepared) { mutableIntStateOf(0) }
     val progress = remember(prepared) { mutableStateOf(0f) }
-
     LaunchedEffect(prepared, autoPlay, loop) {
         if (!autoPlay || prepared.isEmpty()) {
             if (!autoPlay) onComplete()
             return@LaunchedEffect
         }
-
         do {
             // Reset to the guide-only state and let Compose render that state
             // before beginning the first stroke of this cycle.
             currentStroke = 0
             progress.value = 0f
             withFrameNanos { }
-
             for (index in prepared.indices) {
                 val stroke = prepared[index]
                 currentStroke = index
                 progress.value = 0f
-
                 val startNanos = withFrameNanos { it }
                 val durationNanos = stroke.durationMs * 1_000_000L
                 var fraction: Float
-
                 do {
                     val frameNanos = withFrameNanos { it }
                     fraction = ((frameNanos - startNanos).toFloat() / durationNanos)
                         .coerceIn(0f, 1f)
                     // First ease the whole stroke at its start and finish,
                     // then allocate extra time to sharp direction changes.
-                    // This slows the pen naturally through vertices (for
-                    // example, the turns in the 幺 component of 慈) without
-                    // changing the total duration of the stroke.
                     val easedTime = easeInOutCubic(fraction)
                     progress.value = stroke.paceProfile.distanceFractionAt(easedTime)
                     val extraDelay = (frameDelayMs.coerceAtLeast(16) - 16).toLong()
                     if (extraDelay > 0L) delay(extraDelay)
                 } while (fraction < 1f)
-
-                // Move the stroke into the completed range. The Canvas now
-                // draws its entire SVG path, not the last clipped animation
-                // frame, so narrow terminals (e.g. 心 in 慈) cannot remain clipped.
                 // Promote the just-finished stroke to the completed range and
                 // reset progress in the SAME frame-state handoff. Otherwise,
                 // the next stroke briefly inherits progress == 1f and flashes
@@ -485,12 +459,10 @@ fun AnimationCanvas(
                 currentStroke = index + 1
                 progress.value = 0f
                 withFrameNanos { }
-
                 // Completed strokes remain visible for the whole pause above
                 // and throughout the next stroke's animation.
                 delay(stroke.pauseMs.toLong())
             }
-
             if (!loop) {
                 onComplete()
                 break
@@ -498,9 +470,7 @@ fun AnimationCanvas(
             delay(500L)
         } while (true)
     }
-
     val workPath = remember(prepared) { AndroidPath() }
-
     Canvas(
         modifier = modifier
             .clip(tileShape)
@@ -508,7 +478,6 @@ fun AnimationCanvas(
     ) {
         val canvas = drawContext.canvas.nativeCanvas
         if (showGuide) canvas.drawBitmap(guideBitmap, 0f, 0f, null)
-
         // Finished strokes are always rendered as their complete source SVGs.
         // This guarantees that tapered ends remain visible throughout the pause.
         val completedCount = currentStroke.coerceIn(0, prepared.size)
@@ -528,12 +497,10 @@ fun AnimationCanvas(
                 }
             }
         }
-
         if (autoPlay && currentStroke < prepared.size) {
             val stroke = prepared[currentStroke]
             val t = progress.value.coerceIn(0f, 1f)
             val svg = stroke.svg
-
             if (svg != null && useSvgFill) {
                 when {
                     stroke.isDot -> {
