@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -76,9 +78,6 @@ fun ListContentsScreen(
             val tPrepEnd = SystemClock.elapsedRealtime()
             totalCount = distinct.size
 
-            // Publish a first page immediately so the first frame never waits for
-            // the whole curriculum list; append the remainder in chunks. Keys keep
-            // the LazyColumn anchored while the tail grows.
             characters = distinct.take(FIRST_PAGE)
             onSelectionChange(selectedItems.intersect(distinct.toSet()))
             isLoading = false
@@ -117,9 +116,6 @@ fun ListContentsScreen(
         characters.filter { it in selectedItems }
     }
     val canAct = selectedInList.isNotEmpty() && !isBusy
-    // Normal LazyColumn + reversed data + bottom alignment (the pattern proven in
-    // ListsScreen): bottom-first ordering without reverseLayout's anchoring and
-    // mirrored-placement costs.
     val visualItems = remember(characters) { characters.asReversed() }
 
     Column(
@@ -178,58 +174,22 @@ fun ListContentsScreen(
                     contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)
                 ) {
-                    items(visualItems, key = { it }) { item ->
-                        val isSelected = item in selectedItems
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.medium)
-                                .background(
-                                    if (isSelected) {
-                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                    }
-                                )
-                                .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = item,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = { onPracticeItemClick(item) },
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.PlayArrow,
-                                    contentDescription = "Practice $item",
-                                    tint = MaterialTheme.colorScheme.primary
+                    items(
+                        visualItems,
+                        key = { it },
+                        contentType = { "list-row" }
+                    ) { item ->
+                        ListContentRow(
+                            item = item,
+                            isSelected = item in selectedItems,
+                            onPractice = { onPracticeItemClick(item) },
+                            onDetails = { onWordClick(item) },
+                            onToggle = { checked ->
+                                onSelectionChange(
+                                    if (checked) selectedItems + item else selectedItems - item
                                 )
                             }
-                            IconButton(
-                                onClick = { onWordClick(item) },
-                                modifier = Modifier.size(42.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = "View details for $item",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Checkbox(
-                                checked = isSelected,
-                                onCheckedChange = { checked ->
-                                    onSelectionChange(
-                                        if (checked) selectedItems + item else selectedItems - item
-                                    )
-                                }
-                            )
-                        }
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -389,5 +349,85 @@ fun ListContentsScreen(
                 ) { Text("Close") }
             }
         )
+    }
+}
+
+/**
+ * Lightweight row: plain clickable Icons and a simple check surface instead of
+ * IconButton/Checkbox. Those Material3 components each pull in Surface + ripple +
+ * minimumInteractiveComponentSize + animation machinery (~40 composables/row),
+ * which dominated frame time while scrolling multi-thousand-row curriculum lists.
+ */
+@Composable
+private fun ListContentRow(
+    item: String,
+    isSelected: Boolean,
+    onPractice: () -> Unit,
+    onDetails: () -> Unit,
+    onToggle: (Boolean) -> Unit
+) {
+    val container = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(container)
+            .padding(start = 12.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = item,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            Icons.Default.PlayArrow,
+            contentDescription = "Practice $item",
+            tint = primary,
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .clickable(onClick = onPractice)
+                .padding(9.dp)
+        )
+        Icon(
+            Icons.Default.Info,
+            contentDescription = "View details for $item",
+            tint = primary,
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .clickable(onClick = onDetails)
+                .padding(9.dp)
+        )
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onToggle(!isSelected) }
+                .padding(9.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(
+                    if (isSelected) primary
+                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isSelected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
     }
 }
