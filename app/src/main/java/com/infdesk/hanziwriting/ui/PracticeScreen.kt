@@ -29,7 +29,6 @@ fun PracticeScreen(
     onBackClick: () -> Unit = {}
 ) {
     BackHandler(enabled = true) { onBackClick() }
-
     val context = LocalContext.current
     val practicePreferences = remember {
         context.getSharedPreferences(PracticePreferences.PREFS_NAME, Context.MODE_PRIVATE)
@@ -46,16 +45,20 @@ fun PracticeScreen(
             practiceCharactersIndividually = practiceCharactersIndividually
         )
     }
-
+    // This view model is not owned by a ViewModelStore, so nothing would ever
+    // call onCleared(). Cancel its background loads when the screen leaves
+    // composition; otherwise an abandoned big-list practice keeps loading
+    // forever and makes the whole app slow and unstable.
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.dispose() }
+    }
     LaunchedEffect(wordToPractice) {
         if (wordToPractice != null) {
             viewModel.loadCharacters(wordToPractice)
         }
     }
-
     val currentChar = viewModel.currentChar
     val phase = viewModel.currentGlobalPhase
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -71,28 +74,22 @@ fun PracticeScreen(
                     contentDescription = "Exit practice"
                 )
             }
-
             Spacer(modifier = Modifier.weight(1f))
-
             Text(
                 "Phase ${viewModel.currentGlobalPhaseIndex + 1}/5 - " +
                     "Char ${viewModel.currentCharIndex + 1}/${viewModel.characters.size}",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary
             )
-
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.width(48.dp))
         }
-
         if (currentChar == null || currentChar.charData == null) {
             // Hold the page layout steady; only the first-run database initializer has a progress screen.
             Spacer(modifier = Modifier.weight(1f))
             return
         }
-
         val data = currentChar.charData!!
-
         Box(
             modifier = Modifier
                 .height(120.dp)
@@ -113,7 +110,6 @@ fun PracticeScreen(
                         onComplete = {}
                     )
                 }
-
                 PracticePhase.TRACE_WITH_TEMPLATE -> {
                     Text(
                         data.character,
@@ -121,14 +117,12 @@ fun PracticeScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-
                 PracticePhase.STRUCTURE_QUIZ -> {
                     Text(
                         "Select components in writing order",
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
-
                 PracticePhase.TRACE_BLIND_TEMPLATE -> {
                     Text(
                         "Draw with template",
@@ -136,7 +130,6 @@ fun PracticeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
                 PracticePhase.MEMORY_DRAW -> {
                     Text(
                         "Draw from memory",
@@ -146,9 +139,7 @@ fun PracticeScreen(
                 }
             }
         }
-
         Spacer(modifier = Modifier.height(8.dp))
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -163,7 +154,6 @@ fun PracticeScreen(
                     PinyinUtils.convertToToneMarks(data.pinyin),
                     style = MaterialTheme.typography.titleSmall
                 )
-
                 Text(
                     data.definition,
                     style = MaterialTheme.typography.bodySmall,
@@ -171,9 +161,7 @@ fun PracticeScreen(
                 )
             }
         }
-
         Spacer(modifier = Modifier.height(8.dp))
-
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             Box(
                 modifier = Modifier
@@ -192,7 +180,6 @@ fun PracticeScreen(
             val showTemplate = phase == PracticePhase.ANIMATION ||
                 phase == PracticePhase.TRACE_WITH_TEMPLATE ||
                 phase == PracticePhase.TRACE_BLIND_TEMPLATE
-
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -207,49 +194,33 @@ fun PracticeScreen(
                 )
             }
         }
-
         Spacer(modifier = Modifier.height(16.dp))
-
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
-            val correctLabels = currentChar.orderedComponents.map { it.char.toString() }
-            val correctLabelSet = correctLabels.toSet()
-
-            val correctOptions = currentChar.orderedComponents.mapIndexed { index, component ->
-                QuizOption(
-                    id = index,
-                    label = component.char.toString()
-                )
-            }
-
-            val distractorPool = listOf(
-                "氵", "木", "口", "扌", "忄", "艹", "辶", "阝",
-                "刂", "日", "月", "女", "心", "人", "大", "小"
-            ).filter { it !in correctLabelSet }
-
-            val distractorOptions = distractorPool
-                .shuffled()
-                .take(4)
-                .mapIndexed { index, label ->
-                    QuizOption(
-                        id = correctOptions.size + index,
-                        label = label
-                    )
+            // Build correct options AND distractors inside remember: computing
+            // shuffled distractors on every recomposition wasted work and could
+            // reshuffle the visible quiz mid-interaction.
+            val options = remember(currentChar.character, currentChar.orderedComponents) {
+                val correct = currentChar.orderedComponents.mapIndexed { index, component ->
+                    QuizOption(id = index, label = component.char.toString())
                 }
-
-            val options = remember(
-                currentChar.character,
-                currentChar.orderedComponents
-            ) {
-                (correctOptions + distractorOptions).shuffled()
+                val correctLabels = correct.map { it.label }.toSet()
+                val distractors = listOf(
+                    "氵", "木", "口", "扌", "忄", "", "辶", "阝",
+                    "刂", "日", "月", "女", "心", "人", "大", "小"
+                ).filter { it !in correctLabels }
+                    .shuffled()
+                    .take(4)
+                    .mapIndexed { index, label ->
+                        QuizOption(id = correct.size + index, label = label)
+                    }
+                (correct + distractors).shuffled()
             }
-
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 options.forEach { option ->
                     val used = viewModel.usedOptionIds.contains(option.id)
-
                     Button(
                         onClick = {
                             if (!used && !viewModel.waitingForNext) {
@@ -298,17 +269,14 @@ fun PracticeScreen(
                             "/${currentChar.medians.size}",
                         style = MaterialTheme.typography.bodyLarge
                     )
-
                     Text(
                         "Errors: ${viewModel.totalErrors}",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
-
                 if (viewModel.waitingForNext || viewModel.isAllComplete) {
                     Spacer(modifier = Modifier.weight(1f))
-
                     Button(
                         onClick = {
                             if (viewModel.isAllComplete) onBackClick()
@@ -329,7 +297,6 @@ fun PracticeScreen(
                 }
             }
         }
-
         if (phase == PracticePhase.STRUCTURE_QUIZ &&
             (viewModel.waitingForNext || viewModel.isAllComplete)
         ) {
