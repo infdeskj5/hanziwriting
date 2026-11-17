@@ -21,6 +21,11 @@ on:
         type: boolean
         required: false
         default: false
+      create_release:
+        description: "Publish a GitHub Release (uncheck to build test APKs only)"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
@@ -53,16 +58,15 @@ jobs:
           curl --fail --location --retry 5 --retry-delay 2 \
             -o "$ASSETS/hsk-3.0-words-all.json" \
             https://gushichinese.com/hsk-3.0/downloads/hsk-3.0-words-all.json
-
           # Prefer LinZi's newer, CC BY-SA 4.0 export. Some automated runners
           # receive HTTP 403 from linzi.app; in that case use the public GitHub
           # mirror of the 2022/2023 official TOCFL list supplied by the user.
           if curl --fail --location --retry 2 --retry-delay 2 \
-              --user-agent "Mozilla/5.0 (compatible; HanziWritingBuild/1.0)" \
-              --referer "https://www.linzi.app/data/" \
-              -o "$ASSETS/tocfl-words.json" \
-              https://www.linzi.app/data/files/tocfl-words.json \
-              && python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); rows=d.get("data",[]) if isinstance(d,dict) else d; assert len(rows)>=7000, "TOCFL JSON is incomplete"' "$ASSETS/tocfl-words.json"; then
+            --user-agent "Mozilla/5.0 (compatible; HanziWritingBuild/1.0)" \
+            --referer "https://www.linzi.app/data/" \
+            -o "$ASSETS/tocfl-words.json" \
+            https://www.linzi.app/data/files/tocfl-words.json \
+            && python3 -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); rows=d.get("data",[]) if isinstance(d,dict) else d; assert len(rows)>=7000, "TOCFL JSON is incomplete"' "$ASSETS/tocfl-words.json"; then
             echo "Using LinZi TOCFL dataset."
           else
             rm -f "$ASSETS/tocfl-words.json"
@@ -147,13 +151,54 @@ jobs:
           java-version: 17
           cache: gradle
 
+      # One-time bootstrap: create a FIXED debug keystore and commit it to the
+      # repo. Every later build (debug AND bench) is then signed with the same
+      # key, so Android installs them as in-place UPDATES instead of forcing an
+      # uninstall + fresh install on every test. Without this, each runner
+      # generates its own key, which wipes the database, lists and ART state on
+      # every install and makes every measurement a cold-start measurement.
+      - name: Ensure fixed debug keystore
+        run: |
+          set -euo pipefail
+          if [ ! -f app/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore app/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add app/debug.keystore
+            git commit -m "ci: add fixed debug keystore for in-place installs"
+            git push origin HEAD
+          else
+            echo "Fixed debug keystore already present."
+          fi
+
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
+      - name: Build APKs (debug + non-debuggable bench)
+        run: ./gradlew assembleDebug assembleBench
+
+      # Artifacts are downloadable from the run page on a phone (GitHub -> repo
+      # -> Actions -> run -> Artifacts), no PC/ADB needed.
+      - name: Upload bench APK (performance testing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanzi-bench-apk
+          path: app/build/outputs/apk/bench/*.apk
+          if-no-files-found: error
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanzi-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Prepare release asset
+        if: ${{ inputs.create_release }}
         env:
           INPUT_TAG: ${{ env.TAG_NAME }}
           INPUT_RELEASE_NAME: ${{ inputs.release_name }}
@@ -169,6 +214,7 @@ jobs:
           echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
+        if: ${{ inputs.create_release }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG_NAME }}
