@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infdesk.hanziwriting.data.AppDatabase
+import com.infdesk.hanziwriting.utils.DebugLog
 import com.infdesk.hanziwriting.utils.PinyinUtils
 
 private data class QuizOption(
@@ -45,15 +46,17 @@ fun PracticeScreen(
             practiceCharactersIndividually = practiceCharactersIndividually
         )
     }
-    // This view model is not owned by a ViewModelStore, so nothing would ever
-    // call onCleared(). Cancel its background loads when the screen leaves
-    // composition; otherwise an abandoned big-list practice keeps loading
-    // forever and makes the whole app slow and unstable.
+    // This VM is not owned by a ViewModelStore, so onCleared() is never called.
+    // dispose() stops background work; the VM can still load again afterwards.
     DisposableEffect(viewModel) {
-        onDispose { viewModel.dispose() }
+        onDispose {
+            DebugLog.d("Probe", "PracticeScreen left composition")
+            viewModel.dispose()
+        }
     }
     LaunchedEffect(wordToPractice) {
         if (wordToPractice != null) {
+            DebugLog.d("PracticeLoad", "screen request len=${wordToPractice.length}")
             viewModel.loadCharacters(wordToPractice)
         }
     }
@@ -197,15 +200,15 @@ fun PracticeScreen(
         Spacer(modifier = Modifier.height(16.dp))
         if (phase == PracticePhase.STRUCTURE_QUIZ) {
             // Build correct options AND distractors inside remember so the visible
-            // quiz cannot reshuffle mid-interaction on unrelated recompositions.
+            // quiz cannot reshuffle on unrelated recompositions.
             val options = remember(currentChar.character, currentChar.orderedComponents) {
                 val correct = currentChar.orderedComponents.mapIndexed { index, component ->
                     QuizOption(id = index, label = component.char.toString())
                 }
                 val correctLabels = correct.map { it.label }.toSet()
                 val distractors = listOf(
-                    "氵", "木", "口", "扌", "", "艹", "", "阝",
-            "刂", "日", "月", "女", "心", "人", "大", "小"
+                    "氵", "木", "口", "扌", "忄", "艹", "辶", "阝",
+                    "刂", "日", "月", "女", "心", "人", "大", "小"
                 ).filter { it !in correctLabels }
                     .shuffled()
                     .take(4)
@@ -223,10 +226,7 @@ fun PracticeScreen(
                     Button(
                         onClick = {
                             if (!used && !viewModel.waitingForNext) {
-                                viewModel.selectComponent(
-                                    option.id,
-                                    option.label
-                                )
+                                viewModel.selectComponent(option.id, option.label)
                             }
                         },
                         enabled = !used && !viewModel.waitingForNext,
@@ -283,10 +283,7 @@ fun PracticeScreen(
                         },
                         modifier = Modifier.size(width = 88.dp, height = 40.dp),
                         shape = MaterialTheme.shapes.large,
-                        contentPadding = PaddingValues(
-                            horizontal = 20.dp,
-                            vertical = 0.dp
-                        )
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp)
                     ) {
                         Text(
                             if (viewModel.isAllComplete) "Finish!" else "Done",
@@ -315,10 +312,7 @@ fun PracticeScreen(
                     },
                     modifier = Modifier.size(width = 88.dp, height = 40.dp),
                     shape = MaterialTheme.shapes.large,
-                    contentPadding = PaddingValues(
-                        horizontal = 20.dp,
-                        vertical = 0.dp
-                    )
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp)
                 ) {
                     Text(
                         if (viewModel.isAllComplete) "Finish!" else "Done",
