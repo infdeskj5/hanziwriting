@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.infdesk.hanziwriting.data.AppDatabase
@@ -20,9 +19,15 @@ import com.infdesk.hanziwriting.utils.IdsNode
 import com.infdesk.hanziwriting.utils.IdsParser
 import com.infdesk.hanziwriting.utils.ProgressStore
 import com.infdesk.hanziwriting.utils.StrokeEvaluator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class PracticePhase {
@@ -96,25 +101,38 @@ class PracticeViewModel(
     val completedStrokes = mutableStateListOf<List<Offset>>()
     val selectedComponents = mutableStateListOf<String>()
     val usedOptionIds = mutableStateListOf<Int>()
+
     private val gson = Gson()
+    private var workerScope: CoroutineScope? = null
     private var loadJob: Job? = null
     private val disposed = AtomicBoolean(false)
 
     init {
         Diagnostics.vm.incrementAndGet()
-        DebugLog.d("Probe", "PracticeViewModel created (vm=${Diagnostics.vm.get()})")
+        DebugLog.d("Probe", "PracticeViewModel created vm=${Diagnostics.vm.get()}")
     }
 
-    /** Called by PracticeScreen's DisposableEffect. This VM is created with
-     *  remember(), so a ViewModelStore never calls onCleared(); without this the
-     *  load coroutine would keep running after the screen is gone. */
+    /**
+     * A ViewModel's own viewModelScope cannot be revived after cancel(), which
+     * permanently killed loading if dispose() ever ran while the screen was
+     * alive. This worker scope is recreated on demand instead.
+     */
+    private fun scope(): CoroutineScope {
+        val existing = workerScope
+        if (existing != null && existing.isActive) return existing
+        return CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            .also { workerScope = it }
+    }
+
     fun dispose() {
+        loadJob?.cancel()
+        loadJob = null
+        workerScope?.cancel()
+        workerScope = null
         if (disposed.compareAndSet(false, true)) {
             Diagnostics.vm.decrementAndGet()
-            loadJob?.cancel()
-            viewModelScope.cancel()
-            DebugLog.d("Probe", "PracticeViewModel disposed (vm=${Diagnostics.vm.get()})")
         }
+        DebugLog.d("Probe", "PracticeViewModel disposed vm=${Diagnostics.vm.get()}")
     }
 
     override fun onCleared() {
@@ -123,18 +141,20 @@ class PracticeViewModel(
     }
 
     fun loadCharacters(input: String) {
+        loadJob?.cancel()
+        if (disposed.compareAndSet(true, false)) {
+            Diagnostics.vm.incrementAndGet()
+        }
         characters.clear()
         resetStrokeState()
         isAllComplete = false
         waitingForNext = false
         currentGlobalPhaseIndex = 0
         currentCharIndex = 0
-        input.forEach {
-            characters.add(CharacterProgress(character = it.toString()))
-        }
+        input.forEach { characters.add(CharacterProgress(character = it.toString())) }
         DebugLog.d(
             "PracticeLoad",
-            "start chars=${characters.size} distinct=${input.toList().distinct().size}"
+            "request chars=${characters.size} distinct=${input.toList().distinct().size}"
         )
         if (characters.isEmpty()) {
             isAllComplete = true
@@ -142,78 +162,96 @@ class PracticeViewModel(
         }
         Diagnostics.vmJobs.incrementAndGet()
         val t0 = SystemClock.elapsedRealtime()
-        loadJob = viewModelScope.launch {
+        loadJob = scope().launch {
+            val cache = HashMap<String, CharacterProgress>()
+            var firstReady = false
             try {
-                characters.forEachIndexed { index, cp ->
-                    val charData = database.hanziDao().getCharacterExact(cp.character)
-                    val graphicsData = database.hanziDao().getGraphics(cp.character)
-                    if (charData != null && graphicsData != null) {
-                        val type = object : TypeToken<Map<String, Any>>() {}.type
-                        val jsonMap: Map<String, Any> = gson.fromJson(graphicsData.rawJson, type)
-                        @Suppress("UNCHECKED_CAST")
-                        val medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
-                        @Suppress("UNCHECKED_CAST")
-                        val strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
-                        val idsRoot = IdsParser.parse(charData.decomposition)
-                        val leaves = IdsParser.getLeavesWithIndex(idsRoot)
-                        val orderedComponents = mutableListOf<ComponentInfo>()
-                        val leafRank = mutableMapOf<Int, Int>()
-                        val firstAppearance = mutableMapOf<Int, Int>()
-                        if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
-                            try {
-                                val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
-                                val matches: List<List<Number>?> =
-                                    gson.fromJson(charData.matchesJson, matchesType)
-                                matches.forEachIndexed { strokeIndex, path ->
-                                    if (path != null) {
-                                        val intPath = path.map { it.toInt() }
-                                        val leafIndex = IdsParser.resolvePath(idsRoot, intPath)
-                                        if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
-                                            firstAppearance[leafIndex] = strokeIndex
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                DebugLog.e("PracticeVM", "matches parse failed", e)
-                            }
-                        }
-                        val sortedLeaves = leaves.sortedBy {
-                            firstAppearance[it.index] ?: Int.MAX_VALUE
-                        }
-                        sortedLeaves.forEachIndexed { rank, leaf ->
-                            orderedComponents.add(
-                                ComponentInfo(
-                                    char = leaf.char,
-                                    leafIndex = leaf.index,
-                                    order = rank
-                                )
+                for (index in characters.indices) {
+                    val character = characters[index].character
+                    val loaded = cache[character]
+                        ?: runCatching { buildProgress(character) }
+                            .onFailure { DebugLog.e("PracticeLoad", "load failed for $character", it) }
+                            .getOrNull()
+                            ?.also { cache[character] = it }
+                    if (loaded != null) {
+                        characters[index] = loaded
+                        if (!firstReady) {
+                            firstReady = true
+                            currentCharIndex = index
+                            alignCurrentPosition()
+                            DebugLog.d(
+                                "PracticeLoad",
+                                "first ready index=$index ms=${SystemClock.elapsedRealtime() - t0}"
                             )
-                            leafRank[leaf.index] = rank
                         }
-                        characters[index] = cp.copy(
-                            charData = charData,
-                            medians = medians,
-                            strokes = strokes,
-                            orderedComponents = orderedComponents,
-                            idsRoot = idsRoot,
-                            leafRank = leafRank
-                        )
                     }
-                    if (index > 0 && index % 250 == 0) {
-                        DebugLog.d(
-                            "PracticeLoad",
-                            "progress index=$index elapsedMs=${SystemClock.elapsedRealtime() - t0}"
-                        )
-                    }
+                    // Cooperate so a long list never monopolises the main thread.
+                    if (index % 8 == 0) yield()
                 }
                 alignCurrentPosition()
                 DebugLog.d(
                     "PracticeLoad",
-                    "done chars=${characters.size} elapsedMs=${SystemClock.elapsedRealtime() - t0}"
+                    "done chars=${characters.size} cached=${cache.size} " +
+                        "ms=${SystemClock.elapsedRealtime() - t0}"
                 )
             } finally {
                 Diagnostics.vmJobs.decrementAndGet()
             }
+        }
+    }
+
+    /** Loads one character; all JSON/IDS parsing happens off the main thread. */
+    private suspend fun buildProgress(character: String): CharacterProgress? {
+        val dao = database.hanziDao()
+        val charData = dao.getCharacterExact(character) ?: return null
+        val rawJson = dao.getGraphics(character)?.rawJson
+        return withContext(Dispatchers.Default) {
+            var medians: List<List<List<Double>>> = emptyList()
+            var strokes: List<String> = emptyList()
+            if (!rawJson.isNullOrBlank()) {
+                runCatching {
+                    val type = object : TypeToken<Map<String, Any>>() {}.type
+                    val jsonMap: Map<String, Any> = gson.fromJson(rawJson, type)
+                    @Suppress("UNCHECKED_CAST")
+                    medians = jsonMap["medians"] as? List<List<List<Double>>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    strokes = jsonMap["strokes"] as? List<String> ?: emptyList()
+                }
+            }
+            val idsRoot = IdsParser.parse(charData.decomposition)
+            val leaves = IdsParser.getLeavesWithIndex(idsRoot)
+            val firstAppearance = mutableMapOf<Int, Int>()
+            if (leaves.size > 1 && charData.matchesJson.isNotBlank()) {
+                runCatching {
+                    val matchesType = object : TypeToken<List<List<Number>?>>() {}.type
+                    val matches: List<List<Number>?> =
+                        gson.fromJson(charData.matchesJson, matchesType)
+                    matches.forEachIndexed { strokeIndex, path ->
+                        if (path != null) {
+                            val leafIndex = IdsParser.resolvePath(idsRoot, path.map { it.toInt() })
+                            if (leafIndex >= 0 && !firstAppearance.containsKey(leafIndex)) {
+                                firstAppearance[leafIndex] = strokeIndex
+                            }
+                        }
+                    }
+                }.onFailure { DebugLog.e("PracticeVM", "matches parse failed", it) }
+            }
+            val orderedComponents = mutableListOf<ComponentInfo>()
+            val leafRank = mutableMapOf<Int, Int>()
+            leaves.sortedBy { firstAppearance[it.index] ?: Int.MAX_VALUE }
+                .forEachIndexed { rank, leaf ->
+                    orderedComponents.add(ComponentInfo(leaf.char, leaf.index, rank))
+                    leafRank[leaf.index] = rank
+                }
+            CharacterProgress(
+                character = character,
+                charData = charData,
+                medians = medians,
+                strokes = strokes,
+                orderedComponents = orderedComponents,
+                idsRoot = idsRoot,
+                leafRank = leafRank
+            )
         }
     }
 
@@ -273,9 +311,7 @@ class PracticeViewModel(
         }
         if (isAbsoluteLastStep()) {
             isAllComplete = true
-            currentChar?.let {
-                ProgressStore.incrementSuccess(it.character)
-            }
+            currentChar?.let { ProgressStore.incrementSuccess(it.character) }
         } else {
             waitingForNext = true
         }
@@ -351,18 +387,13 @@ class PracticeViewModel(
                 }
             } else {
                 isAllComplete = true
-                currentChar?.let {
-                    ProgressStore.incrementSuccess(it.character)
-                }
+                currentChar?.let { ProgressStore.incrementSuccess(it.character) }
             }
         }
         resetStrokeState()
     }
 
-    fun selectComponent(
-        optionId: Int,
-        component: String
-    ): Boolean {
+    fun selectComponent(optionId: Int, component: String): Boolean {
         val cp = currentChar ?: return false
         val expectedIndex = selectedComponents.size
         if (expectedIndex >= cp.orderedComponents.size) return false
@@ -393,9 +424,7 @@ class PracticeViewModel(
         }
         if (currentStrokeIndex >= cp.medians.size) return
         val scale = canvasSize / HanziTransform.GRID_WIDTH
-        val expected = cp.medians[currentStrokeIndex].map {
-            HanziTransform.toCanvas(it, scale)
-        }
+        val expected = cp.medians[currentStrokeIndex].map { HanziTransform.toCanvas(it, scale) }
         val isCorrect = StrokeEvaluator.evaluateStroke(
             currentStrokePoints.toList(),
             expected,
