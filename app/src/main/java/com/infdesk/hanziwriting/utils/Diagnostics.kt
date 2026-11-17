@@ -9,6 +9,8 @@ import android.os.Looper
 import android.os.Process
 import android.os.StrictMode
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityServiceInfo
 import com.infdesk.hanziwriting.BuildConfig
 import com.infdesk.hanziwriting.data.AppDatabase
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Measurement-only instrumentation. Nothing here changes app behaviour.
- * Everything is written to DebugLog so a single exported report contains it.
+ * Everything is written to DebugLog so one exported report contains it all.
  */
 object Diagnostics {
     private val started = AtomicBoolean(false)
@@ -46,6 +48,7 @@ object Diagnostics {
         if (!started.compareAndSet(false, true)) return
         val app = context.applicationContext
         DebugLog.d("Boot", installSummary(app))
+        DebugLog.d("Boot", accessibilitySummary(app))
         DebugLog.d(
             "Boot",
             "device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
@@ -59,8 +62,16 @@ object Diagnostics {
         startCpuProbe()
     }
 
+    /**
+     * Marks an event timestamp. List taps also advance the open counter here, so
+     * callers that only read openSequence() cannot double-count an open.
+     */
     fun mark(key: String) {
         marks[key] = SystemClock.uptimeMillis()
+        if (key.startsWith("listTap:")) {
+            val id = key.removePrefix("listTap:").toIntOrNull()
+            if (id != null) openCounts[id] = (openCounts[id] ?: 0) + 1
+        }
     }
 
     fun sinceMark(key: String): Long {
@@ -68,12 +79,8 @@ object Diagnostics {
         return SystemClock.uptimeMillis() - t
     }
 
-    /** Increments and returns how many times this list has been opened in this process. */
-    fun openSequence(listId: Int): Int {
-        val n = (openCounts[listId] ?: 0) + 1
-        openCounts[listId] = n
-        return n
-    }
+    /** How many times this list has been opened in this process (read-only). */
+    fun openSequence(listId: Int): Int = openCounts[listId] ?: 1
 
     fun installSummary(context: Context): String {
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
@@ -87,6 +94,21 @@ object Diagnostics {
                 "freshInstall=${pi.firstInstallTime == pi.lastUpdateTime}"
         }.getOrElse { "installSummary failed: $it" }
     }
+
+    /**
+     * Compose's accessibility traversal (the 300-700 ms
+     * AndroidComposeViewAccessibilityDelegateCompat stalls) only runs when an
+     * accessibility service is active. This reports that state without ADB.
+     */
+    fun accessibilitySummary(context: Context): String = runCatching {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val services = am.getEnabledAccessibilityServiceList(
+            AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+        )
+        "accessibilityEnabled=${am.isEnabled} " +
+            "touchExploration=${am.isTouchExplorationEnabled} " +
+            "serviceCount=${services.size} services=${services.joinToString { it.id }}"
+    }.getOrElse { "accessibilitySummary failed: $it" }
 
     private fun setupStrictMode() {
         val thread = StrictMode.ThreadPolicy.Builder().detectAll()
@@ -204,5 +226,8 @@ object Diagnostics {
     }
 
     suspend fun fullReport(context: Context): String =
-        installSummary(context) + "\n" + memorySummary() + "\n" + dbReport(context)
+        installSummary(context) + "\n" +
+            accessibilitySummary(context) + "\n" +
+            memorySummary() + "\n" +
+            dbReport(context)
 }
