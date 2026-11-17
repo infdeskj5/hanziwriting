@@ -15,12 +15,34 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables { useSupportLibrary = true }
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+        // Build stamp: lets the exported report prove WHICH commit is running,
+        // so a stale APK can never be mistaken for a tested fix again.
         buildConfigField(
             "String",
             "BUILD_ID",
             "\"${System.getenv("GITHUB_SHA")?.take(7) ?: "local"}\""
         )
+    }
+
+    signingConfigs {
+        // CI bootstraps app/debug.keystore once and commits it, so every build
+        // (debug AND bench) is signed with the same key. Without this, each
+        // GitHub runner generates its own key, Android refuses in-place updates,
+        // and every test becomes a fresh install: cold page cache, wiped lists,
+        // uncompiled ART state. If the file is absent (local builds), AGP's
+        // default debug keystore is used instead.
+        getByName("debug") {
+            val fixedKeystore = file("debug.keystore")
+            if (fixedKeystore.exists()) {
+                storeFile = fixedKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -31,13 +53,17 @@ android {
                 "proguard-rules.pro"
             )
         }
-        // Non-debuggable performance-test build. Install it OVER an existing
-        // install (same signing key) so data and ART state are preserved.
+        // Non-debuggable performance-test build. A debuggable process gets far
+        // less ART optimisation, which inflates every Compose timing on a weak
+        // SoC; all performance measurements must use this variant.
+        // Install it OVER an existing install (same signing key) so the database,
+        // lists and compiled-code state are preserved.
         create("bench") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
             isDebuggable = false
+            // Keep Gson reflection safe: no shrinking/obfuscation for now.
             isMinifyEnabled = false
         }
     }
@@ -46,7 +72,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -56,7 +84,9 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
     packaging {
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
     }
 }
 
