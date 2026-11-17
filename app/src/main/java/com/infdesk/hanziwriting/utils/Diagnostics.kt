@@ -1,5 +1,6 @@
 package com.infdesk.hanziwriting.utils
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Build
@@ -10,7 +11,6 @@ import android.os.Process
 import android.os.StrictMode
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityManager
-import android.view.accessibility.AccessibilityServiceInfo
 import com.infdesk.hanziwriting.BuildConfig
 import com.infdesk.hanziwriting.data.AppDatabase
 import kotlinx.coroutines.CoroutineScope
